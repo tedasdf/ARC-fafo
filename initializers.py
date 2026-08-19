@@ -40,7 +40,10 @@ class Initializer:
         if callable(n_out):
             n_out = n_out(dims)
 
-        scale = 1 / np.sqrt(n_in)
+        # A relaxed multitensor system contains an example-only tensor. Its
+        # softmax branch intentionally has zero output channels, which creates
+        # a following 0 -> residual-width projection. Keep that no-op finite.
+        scale = 0 if n_in == 0 else 1 / np.sqrt(n_in)
         weight = scale * torch.randn(n_in, n_out)
         bias = scale * torch.randn(n_out)
         weight.requires_grad = True

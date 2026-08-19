@@ -23,13 +23,57 @@ Performing a training run on task <task> and placing the results in <task>/
 done
 ```
 
-The code will create a folder `<task>/` and put plots there after 1500 steps of training:
-- solutions at every 50 steps
-- interpretable tensors of task representations
-- graph of each tensor's contribution to the KL over time
-- graph of the KL vs reconstruction error over time
+The original script creates a `<task>/` folder containing periodic solutions,
+KL curves, and principal-component plots of significant learned tensors.
 
 Most tasks may take up to 20 minutes to run, on one NVIDIA GeForce RTX 4070 GPU.
+
+## Track a single-puzzle run with Weights & Biases
+
+After installing the requirements and authenticating with `wandb login`, run:
+
+```
+python analyze_example_wandb.py --split training --task 272f95fa --wandb
+```
+
+The default W&B project is `compressarc`. Override it with `--wandb-project`, or
+record locally without uploading by adding `--wandb-mode offline`. The run logs
+the loss, reconstruction error, total and per-component KL, the puzzle, solution
+snapshots every 50 steps, configuration, top guesses, and an interactive table
+of principal components for significant latent tensors. `analyze_example.py`
+retains the original local analysis workflow; `analyze_example_wandb.py` does
+not create task result folders, metric archives, PDFs, or PNG files.
+
+Useful development options include `--iterations 100` for a short run and
+`--wandb-log-every 10` to reduce scalar logging frequency. Final PCA uses 100
+decoder samples and a KL threshold of 1 by default; configure it with
+`--pca-samples`, `--pca-kl-threshold`, and `--pca-components`, or disable it
+with `--skip-pca`.
+
+To run the five author-highlighted training tasks sequentially with the original
+1,500-step configuration, use:
+
+```
+python analyze_example_wandb.py --split training --wandb --tasks 272f95fa 6d75e8bb 6cdd2623 41e4d17e 2bee17df
+```
+
+Each task creates a separate W&B run in the same project.
+
+## Multitensor constraint ablation
+
+The strict baseline permits 18 of the 32 possible dimension combinations. The
+relaxed ablation permits all 31 non-empty combinations, adding example-only
+latents and global spatial latents that do not carry an example dimension. Run
+both conditions as separate W&B runs with:
+
+```
+python analyze_example_wandb.py --split training --wandb --tasks 272f95fa 6d75e8bb 6cdd2623 --multitensor-constraints strict relaxed
+```
+
+W&B records the policy, legal multitensor count, and total parameter count for
+each run. Global spatial tensors participate in communication, softmax,
+nonlinearity, and direction sharing; per-example masked spatial operations stay
+restricted to tensors with an example dimension.
 
 
 # How to see which puzzles were solved, using the run information in this repo
@@ -54,7 +98,8 @@ python list_solved_puzzles.py results_for_the_blog_post/predictions_training.npz
 A basic description of the code files in this repo:
 
 **For running via command line:**
-- `analyze_example.py`: Demonstrates how to solve one ARC-AGI problem using our method, with visualizations of learned task representations and plots of metrics.
+- `analyze_example.py`: Original single-task analysis, including saved metrics and principal components of significant tensors.
+- `analyze_example_wandb.py`: Single-task runner that streams metrics and predictions to W&B without saving result artifacts locally.
 - `plot_problems.py`: Plots all of the ARC-AGI problems in a split.
 - `plot_accuracy.py`: Plots pass@n accuracies during/after a bulk training run with `train.py`.
 - `train.py`: Trains a model for every task in a split, plotting the accuracy. Contains code that computes the loss function. Defaults to the training split.

@@ -14,7 +14,7 @@ class MultiTensorSystem:
     'colors', 'directions', and (x, y) positions. This class can generate
     and iterate through valid dimension combinations.
     """
-    def __init__(self, n_examples, n_colors, n_x, n_y, task):
+    def __init__(self, n_examples, n_colors, n_x, n_y, task, constraint_policy='strict'):
         """
         Args:
             n_examples (int): Number of examples.
@@ -29,20 +29,31 @@ class MultiTensorSystem:
         self.n_x = n_x
         self.n_y = n_y
         self.task = task
+        if constraint_policy not in ('strict', 'relaxed'):
+            raise ValueError(
+                f"Unknown multitensor constraint policy: {constraint_policy!r}"
+            )
+        self.constraint_policy = constraint_policy
         self.dim_lengths = [self.n_examples, self.n_colors,
                             self.n_directions, self.n_x, self.n_y]
     def dims_valid(self, dims):
         """
-        Checks whether a given dimension combination is valid.
-        Validity rules:
+        Checks whether a given dimension combination is valid. The strict
+        baseline uses these validity rules:
         1. If any of x/y is set (dims[3] or dims[4]), then examples (dims[0]) must also be set.
         2. Sum of dims[1:] cannot be zero (i.e., at least color, direction, or x/y must be set).
+        The relaxed ablation accepts every combination except the all-zero one.
         Args:
             dims (list[int]): A list of 0/1 flags indicating which dimensions are included.
         Returns:
             bool: Whether the dimension combination is valid.
         """
-        # If x or y is set, then examples must also be set.
+        if self.constraint_policy == 'relaxed':
+            # Ablation: allow every semantic dimension combination except the
+            # dimensionless global channel vector.
+            return sum(dims) > 0
+
+        # Strict baseline: if x or y is set, examples must also be set.
         if (dims[3] or dims[4]) and not dims[0]:
             return False
         # At least one of [color, direction, x, y] must be set.

@@ -3,7 +3,12 @@ import itertools
 import numpy as np
 import torch
 
-import multitensor_systems
+try:
+    from CompressARC import multitensor_systems
+except ModuleNotFoundError as error:
+    if error.name != 'CompressARC':
+        raise
+    import multitensor_systems
 
 """
 This file contains all of the layers of our network. The architecture which puts the layers
@@ -208,7 +213,7 @@ def share_direction(residual, share_weights, direction):
                     for dim, (higher_naxes, naxes) in reversed(list(enumerate(zip(higher_dims, dims)))):
                         if higher_naxes > naxes:
                             axis = sum(higher_dims[:dim], 0)
-                            if (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==3:  # be careful aggregating the x axis
+                            if higher_dims[0] == 1 and (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==3:  # be careful aggregating the x axis
                                 # expand/contract masks to make the dims the same as higher_x
                                 masks = x.multitensor_system.task.masks
                                 masks = 1-(1-masks[...,0])*(1-masks[...,1])
@@ -218,7 +223,7 @@ def share_direction(residual, share_weights, direction):
                                     masks = masks[...,0]
                                 masks = masks[...,None]  # add channel dim
                                 higher_x = torch.sum(higher_x*masks, dim=axis) / (torch.sum(masks, dim=axis)+1e-4)
-                            elif (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==4:  # be careful aggregating the y axis
+                            elif higher_dims[0] == 1 and (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==4:  # be careful aggregating the y axis
                                 # expand/contract masks to make the dims the same as higher_x
                                 masks = x.multitensor_system.task.masks
                                 masks = 1-(1-masks[...,0])*(1-masks[...,1])
@@ -304,6 +309,11 @@ def softmax(dims, x):
         softmax = torch.exp(x-offsets)
         softmax = softmax / torch.sum(softmax, dim=subset, keepdim=True)
         softmaxxes.append(softmax)
+    if not softmaxxes:
+        # The relaxed ablation permits an example-only tensor. It has no
+        # non-example semantic axis to normalize, and its projected softmax
+        # channel width is zero, so this branch contributes a zero residual.
+        return x[..., :0]
     return torch.cat(softmaxxes, dim=-1)
 
 

@@ -12,12 +12,13 @@ class Task:
     grid shape handling, solution processing, etc. Sets up the task-specific
     multitensor system to be used to construct the network.
     """
-    def __init__(self, task_name, problem, solution):
+    def __init__(self, task_name, problem, solution, multitensor_constraints='strict'):
         self.task_name = task_name
         self.n_train = len(problem['train'])
         self.n_test = len(problem['test'])
         self.n_examples = self.n_train + self.n_test
         self.unprocessed_problem = problem
+        self.multitensor_constraints = multitensor_constraints
 
         self.shapes = self._collect_problem_shapes(problem)
         self._predict_solution_shapes()
@@ -89,7 +90,12 @@ class Task:
         self.n_colors = len(self.colors) - 1
 
         self.multitensor_system = multitensor_systems.MultiTensorSystem(
-            self.n_examples, self.n_colors, self.n_x, self.n_y, self
+            self.n_examples,
+            self.n_colors,
+            self.n_x,
+            self.n_y,
+            self,
+            constraint_policy=self.multitensor_constraints,
         )
 
     def _create_problem_tensor(self, problem):
@@ -156,7 +162,7 @@ class Task:
         self.masks = torch.from_numpy(self.masks).to(torch.get_default_dtype()).to(torch.get_default_device())
 
 
-def preprocess_tasks(split, task_nums_or_task_names):
+def preprocess_tasks(split, task_nums_or_task_names, multitensor_constraints='strict'):
     """
     Preprocess tasks by loading problems and solutions.
     """
@@ -169,6 +175,7 @@ def preprocess_tasks(split, task_nums_or_task_names):
     
     return [Task(task_name,
                  problems[task_name],
-                 solutions.get(task_name) if solutions else None)
+                 solutions.get(task_name) if solutions else None,
+                 multitensor_constraints=multitensor_constraints)
             for task_name in task_names
             if task_name in task_nums_or_task_names or task_names.index(task_name) in task_nums_or_task_names]
