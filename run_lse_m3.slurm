@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=grouparc-lse
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:T4:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00
@@ -13,17 +13,9 @@ set -u
 # sbatch should be invoked from the updated CompressARC checkout.
 cd "${SLURM_SUBMIT_DIR}"
 
-# Batch shells do not normally activate the interactive Conda environment.
-if [ -f "${HOME}/miniconda3/etc/profile.d/conda.sh" ]; then
-    source "${HOME}/miniconda3/etc/profile.d/conda.sh"
-elif [ -f "${HOME}/anaconda3/etc/profile.d/conda.sh" ]; then
-    source "${HOME}/anaconda3/etc/profile.d/conda.sh"
-else
-    echo "Could not find conda.sh under ${HOME}/miniconda3 or ${HOME}/anaconda3" >&2
-    exit 1
-fi
-
-conda activate SymARC
+module load miniforge3
+eval "$(mamba shell hook --shell bash)"
+mamba activate SymARC
 
 python analyze_example_wandb.py --help | grep -q -- "--cummax-variant" || {
     echo "This is the old checkout: --cummax-variant is unavailable." >&2
