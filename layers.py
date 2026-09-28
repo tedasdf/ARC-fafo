@@ -2,7 +2,6 @@ import itertools
 
 import numpy as np
 import torch
-
 import multitensor_systems
 
 """
@@ -208,7 +207,7 @@ def share_direction(residual, share_weights, direction):
                     for dim, (higher_naxes, naxes) in reversed(list(enumerate(zip(higher_dims, dims)))):
                         if higher_naxes > naxes:
                             axis = sum(higher_dims[:dim], 0)
-                            if (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==3:  # be careful aggregating the x axis
+                            if higher_dims[0] == 1 and (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==3:  # be careful aggregating the x axis
                                 # expand/contract masks to make the dims the same as higher_x
                                 masks = x.multitensor_system.task.masks
                                 masks = 1-(1-masks[...,0])*(1-masks[...,1])
@@ -218,7 +217,7 @@ def share_direction(residual, share_weights, direction):
                                     masks = masks[...,0]
                                 masks = masks[...,None]  # add channel dim
                                 higher_x = torch.sum(higher_x*masks, dim=axis) / (torch.sum(masks, dim=axis)+1e-4)
-                            elif (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==4:  # be careful aggregating the y axis
+                            elif higher_dims[0] == 1 and (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==4:  # be careful aggregating the y axis
                                 # expand/contract masks to make the dims the same as higher_x
                                 masks = x.multitensor_system.task.masks
                                 masks = 1-(1-masks[...,0])*(1-masks[...,1])
@@ -304,6 +303,11 @@ def softmax(dims, x):
         softmax = torch.exp(x-offsets)
         softmax = softmax / torch.sum(softmax, dim=subset, keepdim=True)
         softmaxxes.append(softmax)
+    if not softmaxxes:
+        # The relaxed ablation permits an example-only tensor. It has no
+        # non-example semantic axis to normalize, and its projected softmax
+        # channel width is zero, so this branch contributes a zero residual.
+        return x[..., :0]
     return torch.cat(softmaxxes, dim=-1)
 
 
@@ -451,6 +455,18 @@ cummax = multitensor_systems.multify(  # apply decorators
          cummax_, diagonal_cummax_
          ))))
 
+@multitensor_systems.multify
+@only_do_for_certain_shapes((1,1,1,1,1), (1,0,1,1,1))
+def lse_cummax(dims, x, masks, model, weights=None, projected=False):
+    """Apply pure LSE morphology or a projected residual LSE block."""
+    from lse import directional_lse
+    if not projected:
+        return directional_lse(dims, x, masks, model)
+    z = affine(x, weights[0], use_bias=False)
+    z = directional_lse(dims, z, masks, model)
+    z = normalize(z)
+    return x + affine(z, weights[1], use_bias=False)
+
 """
 Function shift
 
@@ -485,7 +501,34 @@ shift = multitensor_systems.multify(  # apply decorators
         shift_, diagonal_shift_
         ))))
 
+@multitensor_systems.multify
+@only_do_for_certain_shapes((1,1,1,1,1), (1,0,1,1,1))
+def tied_conv_shift(dims, x, masks, conv, weights, projected):
+    """Replace only the original shift block; other components pass through."""
+    from tied_convolution import tied_directional_shift
+    if not projected:
+        return tied_directional_shift(x, masks, conv)
+    z = affine(x, weights[0], use_bias=False)
+    z = tied_directional_shift(z, masks, conv)
+    # Retain the original shift block's post-normalization for this comparison.
+    z = normalize(z)
+    return x + affine(z, weights[1], use_bias=False)
+
+
 directional_dims = [(i,j,1,k,l) for i in range(2) for j in range(2) for k in range(2) for l in range(2)]
+@multitensor_systems.multify
+@only_do_for_certain_shapes(*directional_dims)
+def d4_direction_share(dims, x, model, projection_weights=None, projected=False):
+    """Apply pure D4 mixing or a separately projected residual D4 block."""
+    from direction_share import apply_d4
+    if not projected:
+        return apply_d4(dims, x, model)
+    z = normalize(x)
+    z = affine(z, projection_weights[0], use_bias=False)
+    z = apply_d4(dims, z, model)
+    return x + affine(z, projection_weights[1], use_bias=False)
+
+
 @multitensor_systems.multify
 @only_do_for_certain_shapes(*directional_dims)
 def direction_share(dims, x, weights, pre_norm=True, use_bias=False):

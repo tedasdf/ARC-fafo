@@ -29,11 +29,13 @@ color_list = np.array([
 def convert_color(grid):  # grid dims must end in c
     return np.clip(np.matmul(grid, color_list), 0, 255).astype(np.uint8)
 
-def plot_problem(logger):
+def plot_problem(logger, fname=None):
     """
-    Draw a plot of an ARC-AGI problem, and save it in plots/
+    Draw a plot of an ARC-AGI problem.
     Args:
         logger (Logger): A logger object used to log model outputs for the ARC-AGI task.
+        fname (str | None | False): Output path, the default plots/ path, or False to
+                return the unsaved Matplotlib figure.
     """
 
     # Put all the grids beside one another on one grid
@@ -61,8 +63,6 @@ def plot_problem(logger):
             pixels[example_num,n_x+1-grid.shape[0]:n_x+1+grid.shape[0],mode_num,n_y+4-grid.shape[1]:n_y+4+grid.shape[1],:] = repeat_grid
     pixels = pixels.reshape([(n_train+n_test)*(2*n_x+2), 2*(2*n_y+8), 3])
     
-    os.makedirs("plots/", exist_ok=True)
-
     # Plot the combined grid and make gray dividers between the grid cells, arrows, and a question mark for unsolved examples.
     fig, ax = plt.subplots()
     ax.imshow(pixels, aspect='equal', interpolation='none')
@@ -90,8 +90,13 @@ def plot_problem(logger):
                         color=(59/255, 59/255, 59/255),
                         linewidth=0.3)
     plt.axis('off')
-    plt.savefig('plots/' + logger.task.task_name + '_problem.png', bbox_inches='tight', pad_inches=0)
-    plt.close()
+    if fname is False:
+        return fig
+    if fname is None:
+        os.makedirs("plots/", exist_ok=True)
+        fname = 'plots/' + logger.task.task_name + '_problem.png'
+    plt.savefig(fname, bbox_inches='tight', pad_inches=0)
+    plt.close(fig)
 
 def plot_solution(logger, fname=None):
     """
@@ -99,6 +104,8 @@ def plot_solution(logger, fname=None):
     Draws four plots: A model output sample, the mean of samples, and the top two most common samples.
     Args:
         logger (Logger): A logger object used to log model outputs for the ARC-AGI task.
+        fname (str | None | False): Output path, the default plots/ path, or False to
+                return the unsaved Matplotlib figure.
     """
     n_train = logger.task.n_train
     n_test = logger.task.n_test
@@ -181,9 +188,12 @@ def plot_solution(logger, fname=None):
     for solution_num, solution_label in enumerate(solutions_labels):
         ax.text((2*n_y+8)*solution_num+4+n_y-0.5, -3, solution_label, size='xx-small', ha='center', va='center')
     plt.axis('off')
+    if fname is False:
+        return fig
     if fname is None:
+        os.makedirs("plots/", exist_ok=True)
         fname = 'plots/' + logger.task.task_name + '_solutions.pdf'
     plt.savefig(fname, bbox_inches='tight', pad_inches=0)
-    plt.close()
+    plt.close(fig)
 
 

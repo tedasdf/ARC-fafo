@@ -8,7 +8,7 @@ import layers
 np.random.seed(0)
 torch.manual_seed(0)
 torch.set_default_dtype(torch.float32)
-torch.set_default_device('cuda')
+torch.set_default_device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 class ARCCompressor:
@@ -31,7 +31,8 @@ class ARCCompressor:
     def channel_dim_fn(self, dims):
         return 16 if dims[2] == 0 else 8
 
-    def __init__(self, task):
+    def __init__(self, task, shift_variant='original', direction_share_variant='original',
+                 cummax_variant='original'):
         """
         Create a model that is tailored to the given task, and initialize all the weights.
         The weights are symmetrized such that swapping the x and y dimension ordering should
@@ -40,6 +41,15 @@ class ARCCompressor:
         Args:
             task (preprocessing.Task): The task which the model is to be made for solving.
         """
+        if shift_variant not in ('original', 'projected_conv', 'pure_conv'):
+            raise ValueError(f'Unknown shift variant: {shift_variant}')
+        self.shift_variant = shift_variant
+        if direction_share_variant not in ('original', 'projected_d4', 'pure_d4'):
+            raise ValueError(f'Unknown direction-share variant: {direction_share_variant}')
+        self.direction_share_variant = direction_share_variant
+        if cummax_variant not in ('original', 'projected_lse', 'pure_lse'):
+            raise ValueError(f'Unknown cummax variant: {cummax_variant}')
+        self.cummax_variant = cummax_variant
         self.multitensor_system = task.multitensor_system
 
         # Initialize weights
@@ -88,7 +98,59 @@ class ARCCompressor:
         for layer_num in range(self.n_layers):
             initializer.symmetrize_direction_sharing(self.direction_share_weights[layer_num])
 
+        self.direction_projection_weights = None
+        if direction_share_variant == 'projected_d4':
+            self.direction_projection_weights = [
+                initializer.initialize_multiresidual(8, 8)
+                for _ in range(self.n_layers)
+            ]
+            for weights in self.direction_projection_weights:
+                initializer.symmetrize_xy(weights)
+
         self.weights_list = initializer.weights_list
+        if shift_variant != 'original':
+            from tied_convolution import TiedDirectionalConv
+            # One trainable pair of canonical kernels per depth, shared across
+            # colors/features and the two active multitensor components.
+            self.tied_convs = [TiedDirectionalConv() for _ in range(self.n_layers)]
+            if shift_variant == 'pure_conv':
+                # Preserve baseline RNG consumption during initialization, but
+                # do not optimize projections absent from this architecture.
+                unused = {id(w) for weights in self.shift_weights
+                          for dims in self.multitensor_system
+                          for pair in weights[dims] for w in pair}
+                self.weights_list = [w for w in self.weights_list if id(w) not in unused]
+                self.shift_weights = None
+            self.weights_list.extend(p for conv in self.tied_convs for p in conv.parameters())
+
+        if direction_share_variant != 'original':
+            from direction_share import D4DirectionShare
+            unused = {id(w) for weights in self.direction_share_weights
+                      for dims in self.multitensor_system if dims[2]
+                      for row in weights[dims] for pair in row for w in pair}
+            self.weights_list = [w for w in self.weights_list if id(w) not in unused]
+            self.direction_share_weights = None
+            self.d4_direction_shares = [D4DirectionShare() for _ in range(self.n_layers)]
+            self.weights_list.extend(
+                parameter for module in self.d4_direction_shares
+                for parameter in module.parameters()
+            )
+
+        if cummax_variant != 'original':
+            from lse import MorphologicalMax
+            self.lse_modules = [
+                MorphologicalMax(task.n_x, task.n_y) for _ in range(self.n_layers)
+            ]
+            if cummax_variant == 'pure_lse':
+                unused = {id(w) for weights in self.cummax_weights
+                          for dims in self.multitensor_system
+                          for pair in weights[dims] for w in pair}
+                self.weights_list = [w for w in self.weights_list if id(w) not in unused]
+                self.cummax_weights = None
+            self.weights_list.extend(
+                parameter for module in self.lse_modules
+                for parameter in module.parameters()
+            )
 
 
     def forward(self):
@@ -123,17 +185,42 @@ class ARCCompressor:
             x = layers.softmax(x, self.softmax_weights[layer_num], pre_norm=True, post_norm=False, use_bias=False)
 
             # Directional layers
-            x = layers.cummax(
-                x, self.cummax_weights[layer_num], self.multitensor_system.task.masks,
-                pre_norm=False, post_norm=True, use_bias=False
-            )
-            x = layers.shift(
-                x, self.shift_weights[layer_num], self.multitensor_system.task.masks,
-                pre_norm=False, post_norm=True, use_bias=False
-            )
+            if self.cummax_variant == 'original':
+                x = layers.cummax(
+                    x, self.cummax_weights[layer_num], self.multitensor_system.task.masks,
+                    pre_norm=False, post_norm=True, use_bias=False
+                )
+            else:
+                x = layers.lse_cummax(
+                    x, self.multitensor_system.task.masks, self.lse_modules[layer_num],
+                    None if self.cummax_weights is None else self.cummax_weights[layer_num],
+                    projected=self.cummax_variant == 'projected_lse',
+                )
+            if self.shift_variant == 'original':
+                x = layers.shift(
+                    x, self.shift_weights[layer_num], self.multitensor_system.task.masks,
+                    pre_norm=False, post_norm=True, use_bias=False
+                )
+            else:
+                x = layers.tied_conv_shift(
+                    x, self.multitensor_system.task.masks, self.tied_convs[layer_num],
+                    None if self.shift_weights is None else self.shift_weights[layer_num],
+                    projected=self.shift_variant == 'projected_conv',
+                )
 
             # Directional communication layer
-            x = layers.direction_share(x, self.direction_share_weights[layer_num], pre_norm=True, use_bias=False)
+            if self.direction_share_variant == 'original':
+                x = layers.direction_share(
+                    x, self.direction_share_weights[layer_num], pre_norm=True, use_bias=False
+                )
+            else:
+                x = layers.d4_direction_share(
+                    x,
+                    self.d4_direction_shares[layer_num],
+                    None if self.direction_projection_weights is None
+                    else self.direction_projection_weights[layer_num],
+                    projected=self.direction_share_variant == 'projected_d4',
+                )
 
             # Nonlinear layer
             x = layers.nonlinear(x, self.nonlinear_weights[layer_num], pre_norm=True, post_norm=False, use_bias=False)

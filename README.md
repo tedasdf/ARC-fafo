@@ -1,6 +1,9 @@
 <a href="https://iliao2345.github.io/blog_posts/arc_agi_without_pretraining/arc_agi_without_pretraining.html"><img src="teaser_figure_w_title.png"></a>
 This is the code base for the [ARC-AGI Without Pretraining](https://iliao2345.github.io/blog_posts/arc_agi_without_pretraining/arc_agi_without_pretraining.html) project. The Kaggle competition template version can be found [here](https://www.kaggle.com/code/iliao2345/arc-agi-without-pretraining/notebook?scriptVersionId=232760209).
 
+For the three-variant GroupARC experiment on hosted notebooks, see
+[KAGGLE_COLAB.md](KAGGLE_COLAB.md).
+
 # Installation
 
 ```
@@ -23,13 +26,186 @@ Performing a training run on task <task> and placing the results in <task>/
 done
 ```
 
-The code will create a folder `<task>/` and put plots there after 1500 steps of training:
-- solutions at every 50 steps
-- interpretable tensors of task representations
-- graph of each tensor's contribution to the KL over time
-- graph of the KL vs reconstruction error over time
+The original script creates a `<task>/` folder containing periodic solutions,
+KL curves, and principal-component plots of significant learned tensors.
 
 Most tasks may take up to 20 minutes to run, on one NVIDIA GeForce RTX 4070 GPU.
+
+## Track a single-puzzle run with Weights & Biases
+
+After installing the requirements and authenticating with `wandb login`, run:
+
+```
+python analyze_example_wandb.py --split training --task 272f95fa --wandb
+```
+
+The default W&B project is `compressarc`. Override it with `--wandb-project`, or
+record locally without uploading by adding `--wandb-mode offline`. The run logs
+the loss, reconstruction error, total and per-component KL, the puzzle, solution
+snapshots every 50 steps, configuration, top guesses, and an interactive table
+of principal components for significant latent tensors. `analyze_example.py`
+retains the original local analysis workflow; `analyze_example_wandb.py` does
+not create task result folders, metric archives, PDFs, or PNG files.
+
+Useful development options include `--iterations 100` for a short run and
+`--wandb-log-every 10` to reduce scalar logging frequency. Final PCA uses 100
+decoder samples and a KL threshold of 1 by default; configure it with
+`--pca-samples`, `--pca-kl-threshold`, and `--pca-components`, or disable it
+with `--skip-pca`.
+
+To run the five author-highlighted training tasks sequentially with the original
+1,500-step configuration, use:
+
+```
+python analyze_example_wandb.py --split training --wandb --tasks 272f95fa 6d75e8bb 6cdd2623 41e4d17e 2bee17df
+```
+
+Each task creates a separate W&B run in the same project.
+
+## Multitensor constraint ablation
+
+The strict baseline permits 18 of the 32 possible dimension combinations. The
+relaxed ablation permits all 31 non-empty combinations, adding example-only
+latents and global spatial latents that do not carry an example dimension. Run
+both conditions as separate W&B runs with:
+
+```
+python analyze_example_wandb.py --split training --wandb --tasks 272f95fa 6d75e8bb 6cdd2623 --multitensor-constraints strict relaxed
+```
+
+W&B records the policy, legal multitensor count, and total parameter count for
+each run. Global spatial tensors participate in communication, softmax,
+nonlinearity, and direction sharing; per-example masked spatial operations stay
+restricted to tensors with an example dimension.
+
+## Run the seeded ablation on Modal
+
+`modal_runner.py` reproducibly samples 20 training tasks with seed 42 and runs
+both strict and relaxed conditions, producing 40 independent W&B runs. It uses
+at most four Modal T4 containers concurrently and retains the original 1,500
+training iterations and final PCA analysis.
+
+Install and authenticate the Modal CLI, then create a Modal secret containing
+your W&B API key:
+
+```
+pip install modal
+modal setup
+modal secret create wandb-secret WANDB_API_KEY=<your-wandb-api-key>
+```
+
+Launch the default ablation from the repository root:
+
+```
+modal run modal_runner.py::main
+```
+
+For a cheap two-task, 20-iteration smoke test before the full run:
+
+```
+modal run modal_runner.py::main --number-of-tasks 2 --iterations 20
+```
+
+The entrypoint also accepts `--seed`, `--split`, `--number-of-tasks`,
+`--iterations`, and `--wandb-project`. Each W&B run is tagged with its sampling
+seed and constraint policy. No W&B API key is stored in the repository.
+
+## Three shift-layer variants on successful baseline tasks
+
+Run the original shift, a trainable tied convolution with independent input/output
+projections and residual (`x + W2 normalize(phi(W1 x))`), and the pure tied
+convolution (`phi(x)`, no projections, residual, or block normalization):
+
+```sh
+modal run modal_runner.py::convolution_ablation --dry-run
+modal run --detach modal_runner.py::convolution_ablation
+```
+
+Selection uses finished strict runs in the W&B `compressarc` project with
+`modal`, `strict-vs-relaxed`, and `full-ablation` tags and `pass_2_correct=true`.
+New comparison runs are written to the `grouparc` project. Supply
+`--wandb-entity`, `--wandb-project`, `--baseline-project`, or `--baseline-tag`
+if needed.
+The runner saves task IDs, source run IDs, and conditions to
+`convolution_ablation_manifest.json` before launching three runs per selected
+task. It refuses to launch an empty selection. All conditions use strict
+constraints, 1,500 steps by default, the same training seed (0), and one T4
+container. The seed-42 task sampling tags refer to the original baseline.
+The detached local entrypoint submits one persistent remote coordinator, which
+owns the queue and invokes one GPU condition at a time. Closing the launching
+terminal therefore does not cancel the training jobs.
+
+For long unattended runs, deploy the app and submit independent calls instead.
+This is more durable than a nested coordinator: each condition is stored in
+Modal's server-side queue, one T4 runs at a time, a failed call does not cancel
+later calls, and already-finished W&B task/variant pairs are skipped:
+
+```sh
+modal deploy modal_runner.py
+python submit_modal_queue.py --wandb-entity arc_agi
+```
+
+Submitted call IDs and dashboard URLs are saved in
+`deployed_queue_manifest.json`.
+
+## D4 direction-share ablation and early stopping
+
+The direction-share comparison keeps the original shift layer and runs two new
+conditions: a separately projected D4 block
+`x + W2 D4(W1 normalize(x))`, and pure `D4(x)`. The existing original model is
+the shared baseline for the shift, direction-share, cummax, and LSE ablations;
+it is not rerun for each experiment. Submit the persistent queue with:
+
+```sh
+modal deploy modal_runner.py
+python submit_direction_share_queue.py --wandb-entity arc_agi
+```
+
+These runs use loss-based early stopping after a 300-step warm-up. Training
+stops after 50 consecutive steps without a relative best-loss improvement above
+`1e-4`. The held-out solution is never used to decide when to stop. W&B records
+the completed step count, stop reason, best loss, patience count, both model
+variant axes, D4 orbit parameters, and the existing solve/compute metrics.
+Options `--early-stop-window`, `--early-stop-epsilon`, and
+`--early-stop-warmup` change the defaults. Independent call IDs are saved in
+`direction_share_queue_manifest.json`.
+
+The LSE/cummax comparison also reuses that shared original baseline and submits
+only `projected_lse` (`x + W2 normalize(LSE(W1 x))`) and `pure_lse` (`LSE(x)`):
+
+```sh
+modal deploy modal_runner.py
+python submit_lse_queue.py --wandb-entity arc_agi
+```
+
+It uses the same early-stop defaults and writes call IDs to
+`lse_queue_manifest.json`.
+
+Only the two spatial directional components previously processed by `shift`
+are replaced. Other layers and components retain their behavior. Each model
+depth has a trainable cardinal/diagonal kernel pair shared across features and
+active components. `tied_convolution.py` contains the implementation from
+ARC-fafo's `group_cnn.py` and `shift_adapter.py`, with feature-half selection
+adapted to this checkout's original shift. The projected condition retains the
+original post-normalization and matches original shift outputs at initialization.
+
+For a single local run use `analyze_example_wandb.py --shift-variant original`,
+`--shift-variant projected_conv`, or `--shift-variant pure_conv` together with
+the usual task options. W&B names/configs record the variant and Modal runs
+include baseline run IDs as tags.
+W&B config and summary include unique total/trainable parameter counts and
+convolution parameter counts. Weight histograms and individual convolution
+kernel values are logged at initialization, every prediction snapshot, and the
+final step. Final 3x3 kernels and the count of parameters receiving gradients
+are also saved in the run summary.
+
+Every variant also logs per-step top-1/pass@2 correctness, elapsed training
+time, and estimated cumulative FLOPs. Summary fields record the first correct
+pass@2 step and its wall-clock/compute cost. The stable solve is the first step
+in the final uninterrupted pass@2-correct streak through the last training
+iteration; its step, wall-clock time, and estimated compute are recorded too.
+FLOPs are estimated by profiling the first real forward/backward/optimizer step
+with PyTorch and multiplying its supported-operation count by elapsed steps.
 
 
 # How to see which puzzles were solved, using the run information in this repo
@@ -54,7 +230,8 @@ python list_solved_puzzles.py results_for_the_blog_post/predictions_training.npz
 A basic description of the code files in this repo:
 
 **For running via command line:**
-- `analyze_example.py`: Demonstrates how to solve one ARC-AGI problem using our method, with visualizations of learned task representations and plots of metrics.
+- `analyze_example.py`: Original single-task analysis, including saved metrics and principal components of significant tensors.
+- `analyze_example_wandb.py`: Single-task runner that streams metrics and predictions to W&B without saving result artifacts locally.
 - `plot_problems.py`: Plots all of the ARC-AGI problems in a split.
 - `plot_accuracy.py`: Plots pass@n accuracies during/after a bulk training run with `train.py`.
 - `train.py`: Trains a model for every task in a split, plotting the accuracy. Contains code that computes the loss function. Defaults to the training split.

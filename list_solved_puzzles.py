@@ -4,8 +4,14 @@ import argparse
 import torch
 import numpy as np
 
-import preprocessing
-from plot_accuracy import ValueSortedDict
+try:
+    from CompressARC import preprocessing
+    from CompressARC.plot_accuracy import ValueSortedDict
+except ModuleNotFoundError as error:
+    if error.name != 'CompressARC':
+        raise
+    import preprocessing
+    from plot_accuracy import ValueSortedDict
 
 
 def probe_solutions(solutions_file, split, iteration_num, task_nums=None):
