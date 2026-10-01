@@ -22,7 +22,7 @@ python analyze_example_wandb.py --help | grep -q -- "--cummax-variant" || {
     exit 1
 }
 
-tasks=(50cb2852 54d82841 623ea044 c1d99e64 ec883f72)
+tasks=(0dfd9992 22eb0ac0 239be575 50cb2852 54d82841 623ea044 c1d99e64 ec883f72)
 variants=(projected_lse pure_lse)
 failures=()
 
