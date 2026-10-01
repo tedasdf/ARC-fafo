@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=grouparc-lse-no-es
+#SBATCH --job-name=grouparc-d4-no-es
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:T4:1
 #SBATCH --cpus-per-task=4
@@ -17,13 +17,13 @@ module load miniforge3
 eval "$(mamba shell hook --shell bash)"
 mamba activate SymARC
 
-python analyze_example_wandb.py --help | grep -q -- "--cummax-variant" || {
-    echo "This is the old checkout: --cummax-variant is unavailable." >&2
+python analyze_example_wandb.py --help | grep -q -- "--direction-share-variant" || {
+    echo "This is the old checkout: --direction-share-variant is unavailable." >&2
     exit 1
 }
 
 tasks=(50cb2852 54d82841 623ea044 c1d99e64 ec883f72)
-variants=(projected_lse pure_lse)
+variants=(projected_d4 pure_d4)
 failures=()
 
 for task in "${tasks[@]}"; do
@@ -36,12 +36,12 @@ for task in "${tasks[@]}"; do
             --iterations 1500 \
             --multitensor-constraints strict \
             --shift-variant original \
-            --direction-share-variant original \
-            --cummax-variant "${variant}" \
+            --direction-share-variant "${variant}" \
+            --cummax-variant original \
             --wandb \
             --wandb-entity arc_agi \
             --wandb-project grouparc \
-            --wandb-tags lse-ablation m3 no-early-stop \
+            --wandb-tags direction-share-ablation m3 no-early-stop \
             --skip-pca; then
             echo "Completed ${task} / ${variant} at $(date --iso-8601=seconds)"
         else
@@ -57,4 +57,4 @@ if [ "${#failures[@]}" -gt 0 ]; then
     exit 1
 fi
 
-echo "All requested LSE conditions completed."
+echo "All requested D4 conditions completed."
