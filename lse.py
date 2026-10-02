@@ -1,6 +1,42 @@
 """Smooth D4-tied morphological max adapted from ARC-fafo/group_cnn."""
+from contextlib import contextmanager
+from contextvars import ContextVar
+import time
+
 import torch
 import torch.nn as nn
+
+
+_timings = ContextVar('morphology_timings', default=None)
+
+
+@contextmanager
+def measure_morphology(enabled=False):
+    """Collect synchronized forward wall time, excluding rotations and backward."""
+    totals = {}
+    token = _timings.set(totals if enabled else None)
+    try:
+        yield totals
+    finally:
+        _timings.reset(token)
+
+
+def _measure_call(fn, x, name):
+    totals = _timings.get()
+    if totals is None:
+        return fn(x)
+    if x.is_cuda:
+        torch.cuda.synchronize(x.device)
+    started = time.perf_counter()
+    result = fn(x)
+    if x.is_cuda:
+        torch.cuda.synchronize(x.device)
+    seconds = time.perf_counter() - started
+    key = f'timing/{name}_forward_seconds'
+    totals[key] = totals.get(key, 0.0) + seconds
+    key = f'timing/{name}_calls'
+    totals[key] = totals.get(key, 0) + 1
+    return result
 
 
 class MorphologicalMax(nn.Module):
@@ -46,7 +82,8 @@ class MorphologicalMax(nn.Module):
         rotations = (0, 0, -1, -1, 2, 2, 1, 1)
         rotation = rotations[index]
         rotated = torch.rot90(x, rotation, (-2, -1)) if rotation else x
-        transformed = self._axis_lse(rotated) if index % 2 == 0 else self._diagonal_lse(rotated)
+        fn, name = (self._axis_lse, 'phi') if index % 2 == 0 else (self._diagonal_lse, 'diagonal_phi')
+        transformed = _measure_call(fn, rotated, name)
         return torch.rot90(transformed, -rotation, (-2, -1)) if rotation else transformed
 
 

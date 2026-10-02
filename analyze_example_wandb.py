@@ -45,6 +45,8 @@ def parse_args():
     parser.add_argument('--direction-share-variant', choices=('original', 'projected_d4', 'pure_d4'), default='original')
     parser.add_argument('--cummax-variant', choices=('original', 'projected_lse', 'pure_lse'), default='original')
     parser.add_argument('--early-stop', action='store_true')
+    parser.add_argument('--time-morphology', action='store_true',
+                        help='Log synchronized LSE phi/diagonal phi forward timings (adds overhead).')
     parser.add_argument('--early-stop-window', type=int, default=50)
     parser.add_argument('--early-stop-epsilon', type=float, default=1e-4)
     parser.add_argument('--early-stop-warmup', type=int, default=300)
@@ -174,6 +176,7 @@ def initialize_wandb(args, task, optimizer, model):
             'shift_variant': args.shift_variant,
             'direction_share_variant': args.direction_share_variant,
             'cummax_variant': args.cummax_variant,
+            'time_morphology': args.time_morphology,
             'early_stop': args.early_stop,
             'early_stop_window': args.early_stop_window,
             'early_stop_epsilon_relative': args.early_stop_epsilon,
@@ -222,6 +225,7 @@ def initialize_wandb(args, task, optimizer, model):
     run.define_metric('kernels/*', step_metric='train_step')
     run.define_metric('solve/*', step_metric='train_step')
     run.define_metric('compute/*', step_metric='train_step')
+    run.define_metric('timing/*', step_metric='train_step')
     run.summary.update(parameter_counts(model))
     return run
 
@@ -524,13 +528,18 @@ def run_task(args, split, task_name, multitensor_constraints):
     best_loss = float('inf')
     steps_without_relative_improvement = 0
     stop_reason = 'max_iterations'
+    from lse import measure_morphology
+    morphology_totals = {}
     for train_step in tqdm(range(args.iterations)):
-        if train_step == 0:
-            flops_per_step = estimate_training_step_flops(
-                lambda: train.take_step(task, model, optimizer, train_step, logger)
-            )
-        else:
-            train.take_step(task, model, optimizer, train_step, logger)
+        with measure_morphology(args.time_morphology) as morphology_metrics:
+            if train_step == 0:
+                flops_per_step = estimate_training_step_flops(
+                    lambda: train.take_step(task, model, optimizer, train_step, logger)
+                )
+            else:
+                train.take_step(task, model, optimizer, train_step, logger)
+        for key, value in morphology_metrics.items():
+            morphology_totals[key] = morphology_totals.get(key, 0) + value
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         elapsed = time.perf_counter() - training_started
@@ -551,11 +560,14 @@ def run_task(args, split, task_name, multitensor_constraints):
         should_log = train_step % args.wandb_log_every == 0 or include_prediction
         if should_log:
             log_training_step(wandb_run, logger, train_step, include_prediction)
+            if morphology_metrics:
+                print(f'Morphology forward timing, step {train_step}: {morphology_metrics}')
         if include_prediction or train_step == args.iterations - 1:
             log_parameters(wandb_run, model, train_step)
         if wandb_run is not None:
             wandb_run.log({
                 'train_step': train_step,
+                **morphology_metrics,
                 'solve/top_1_correct': int(bool(top_1_correct)),
                 'solve/pass_2_correct': int(bool(pass_2_correct)),
                 'solve/elapsed_seconds': elapsed,
@@ -572,6 +584,12 @@ def run_task(args, split, task_name, multitensor_constraints):
             )
             break
 
+    if morphology_totals:
+        print(f'Morphology forward totals (seconds and calls): {morphology_totals}')
+        if wandb_run is not None:
+            wandb_run.summary.update({
+                key + '_total': value for key, value in morphology_totals.items()
+            })
     recorded_solve_metrics = solve_metrics(
         correctness_history, elapsed_history, flops_per_step
     )

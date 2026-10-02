@@ -34,6 +34,7 @@ for task in "${tasks[@]}"; do
             --split training \
             --task "${task}" \
             --iterations 1500 \
+            --time-morphology \
             --multitensor-constraints strict \
             --shift-variant original \
             --direction-share-variant original \
