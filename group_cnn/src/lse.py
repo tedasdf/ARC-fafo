@@ -193,8 +193,13 @@ class MorphologicalMax(nn.Module):
         # ==================================================
         # Cardinal directions
         # ==================================================
+        start = torch.cuda.Event(enable_timing=True) 
+        end = torch.cuda.Event(enable_timing=True)
 
+
+        start.record()
         right, exact_right = self.phi(x)
+        end.record()
 
         x_rot = torch.rot90(x, -1, dims=(1, 2))
         up, _ = self.phi(x_rot)
@@ -208,12 +213,19 @@ class MorphologicalMax(nn.Module):
         down, _ = self.phi(x_rot)
         down = torch.rot90(down, -1, dims=(1, 2))
 
+        torch.cuda.synchronize()
+      
+
         # ==================================================
         # Diagonal directions
         # ==================================================
+        time_start = torch.cuda.Event(enable_timing=True) 
+        time_end = torch.cuda.Event(enable_timing=True)
 
+        time_start.record()
         top_right, exact_top_right = self.diagonal_phi(x)
-
+        time_end.record()
+        
         x_rot = torch.rot90(x, -1, dims=(1, 2))
         top_left, _ = self.diagonal_phi(x_rot)
         top_left = torch.rot90(
@@ -237,7 +249,12 @@ class MorphologicalMax(nn.Module):
             -1,
             dims=(1, 2)
         )
+       
 
+        torch.cuda.synchronize()
+
+        print(f"phi: {start.elapsed_time(end):.3f} ms")
+        print(f"diagonal_phi: {time_start.elapsed_time(time_end):.3f} ms")
         # ==================================================
         # Stack all 8 directions
         # ==================================================
@@ -273,7 +290,8 @@ if __name__ == "__main__":
         W=x.shape[-1],
         tau=0.1
     )
-
+    x = x.cuda()
+    model = model.cuda()
     actual, exact_right, exact_top_right = model(x)
 
     right = torch.cummax(x, dim=-1).values
