@@ -51,7 +51,7 @@ class MorphologicalMax(nn.Module):
         support = torch.ones(L_max, dtype=torch.bool)
         self.register_buffer("support", support)
 
-    def diagonal_phi(self, x):
+    def diagonal_phi(self, x, mark=None):
         """
         Canonical diagonal morphological cummax.
 
@@ -62,6 +62,8 @@ class MorphologicalMax(nn.Module):
             exact: [B, H, W]  exact max version
         """
         B, H, W = x.shape
+        if mark:
+            mark('start')
 
         D = H + W - 1
         L = min(H, W)
@@ -77,6 +79,8 @@ class MorphologicalMax(nn.Module):
             device=x.device,
             dtype=x.dtype,
         )
+        if mark:
+            mark('allocate_diagonals')
 
         # remember where every packed value came from
         coordinates = []
@@ -92,10 +96,14 @@ class MorphologicalMax(nn.Module):
                     coords.append((h, w))
 
             coordinates.append(coords)
+        if mark:
+            mark('build_coordinates')
 
         for d, coords in enumerate(coordinates):
             for p, (h, w) in enumerate(coords):
                 diagonals[:, d, p] = x[:, h, w]
+        if mark:
+            mark('pack_diagonals')
 
         # --------------------------------------------------
         # 2. Build f(x-u)
@@ -108,6 +116,8 @@ class MorphologicalMax(nn.Module):
             device=x.device,
             dtype=x.dtype,
         )
+        if mark:
+            mark('allocate_shifted')
 
         for d, coords in enumerate(coordinates):
             diag_len = len(coords)
@@ -115,21 +125,29 @@ class MorphologicalMax(nn.Module):
             for i in range(diag_len):
                 for u in range(i + 1):
                     shifted[:, d, i, u] = diagonals[:, d, i - u]
+        if mark:
+            mark('build_shifted')
 
         # --------------------------------------------------
         # 3. Morphological kernel
         # --------------------------------------------------
 
         scores = shifted + self.diagonal_kernel.view(1, 1, 1, L)
+        if mark:
+            mark('add_kernel')
 
         # Exact morphological max
         exact_diag = scores.max(dim=-1).values
+        if mark:
+            mark('exact_max')
 
         # Smooth max
         out_diag = self.tau * torch.logsumexp(
             scores / self.tau,
             dim=-1,
         )
+        if mark:
+            mark('smooth_logsumexp')
 
         # --------------------------------------------------
         # 4. Scatter diagonals back into [B, H, W]
@@ -143,17 +161,23 @@ class MorphologicalMax(nn.Module):
 
                 out[:, h, w] = out_diag[:, d, p]
                 exact[:, h, w] = exact_diag[:, d, p]
+        if mark:
+            mark('allocate_and_scatter')
 
         return out, exact
 
 
 
-    def phi(self, x):
+    def phi(self, x, mark=None):
+        if mark:
+            mark('start')
         # canonical direction is always last dim
         original_shape = x.shape
         W = x.shape[-1]
 
         x_flat = x.reshape(-1, W)
+        if mark:
+            mark('reshape_input')
 
         x_shifted = torch.full(
             (x_flat.shape[0], W, W),
@@ -161,29 +185,43 @@ class MorphologicalMax(nn.Module):
             device=x.device,
             dtype=x.dtype
         )
+        if mark:
+            mark('allocate_shifted')
 
         for i in range(W):
             for u in range(i + 1):
                 x_shifted[:, i, u] = x_flat[:, i - u]
+        if mark:
+            mark('build_shifted')
 
         kernel = self.kernel[:W]
         support = self.support[:W]
         scores = x_shifted + kernel.view(1, 1, W)
+        if mark:
+            mark('add_kernel')
 
         scores = scores.masked_fill(
             ~support.view(1, 1, W),
             float("-inf")
         )
+        if mark:
+            mark('apply_support')
 
         exact = scores.max(dim=-1).values
+        if mark:
+            mark('exact_max')
 
         out = self.tau * torch.logsumexp(
             scores / self.tau,
             dim=-1
         )
+        if mark:
+            mark('smooth_logsumexp')
 
         out = out.reshape(original_shape)
         exact = exact.reshape(original_shape)
+        if mark:
+            mark('reshape_output')
 
         return out, exact
 
@@ -275,6 +313,27 @@ class MorphologicalMax(nn.Module):
 
         return out, exact_right, exact_top_right
 
+def benchmark(fn, x, warmup=20, runs=100):
+    # warm up
+    for _ in range(warmup):
+        fn(x)
+
+    torch.cuda.synchronize()
+
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+
+    start.record()
+
+    for _ in range(runs):
+        fn(x)
+
+    end.record()
+
+    torch.cuda.synchronize()
+
+    return start.elapsed_time(end) / runs
+
 if __name__ == "__main__":
 
     x = torch.tensor([[
@@ -292,23 +351,36 @@ if __name__ == "__main__":
     )
     x = x.cuda()
     model = model.cuda()
-    actual, exact_right, exact_top_right = model(x)
+    # actual, exact_right, exact_top_right = model(x)
 
-    right = torch.cummax(x, dim=-1).values
+    # right = torch.cummax(x, dim=-1).values
 
-    print("input:\n", x)
-    print("output shape:", actual.shape)
+    # print("input:\n", x)
+    # print("output shape:", actual.shape)
 
-    print("\nexpected right:\n", right)
-    print("\nexact right:\n", exact_right)
+    # print("\nexpected right:\n", right)
+    # print("\nexact right:\n", exact_right)
 
-    print("\nexact diagonal:\n", exact_top_right)
+    # print("\nexact diagonal:\n", exact_top_right)
 
-    assert torch.allclose(exact_right, right)
+    # assert torch.allclose(exact_right, right)
 
-    assert actual.shape == (
-        x.shape[0],
-        8,
-        x.shape[1],
-        x.shape[2],
-    )
+    # assert actual.shape == (
+    #     x.shape[0],
+    #     8,
+    #     x.shape[1],
+    #     x.shape[2],
+    # )
+    phi_ms = benchmark(model.phi, x)
+    diag_ms = benchmark(model.diagonal_phi, x)
+
+    print("phi:", phi_ms, "ms")
+    print("diagonal:", diag_ms, "ms")
+
+
+    diag_ms = benchmark(model.diagonal_phi, x)
+    phi_ms = benchmark(model.phi, x)
+
+    print("phi:", phi_ms, "ms")
+    print("diagonal:", diag_ms, "ms")
+
