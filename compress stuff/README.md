@@ -1,16 +1,16 @@
 <a href="https://iliao2345.github.io/blog_posts/arc_agi_without_pretraining/arc_agi_without_pretraining.html"><img src="teaser_figure_w_title.png"></a>
 This is the code base for the ARC-AGI Without Pretraining project. The Kaggle competition template version is available from the project page.
 
-The new model and trainer live under src/. The old inference, scoring, and Modal batch scripts remain here; see LEGACY_TOOLS.md for their dependencies.
+The new model and trainer live under src/. The old inference and Modal batch scripts remain here; see LEGACY_TOOLS.md for their dependencies.
 
 # Installation
 
 For the current training workflow, install the dependencies and commands documented in ../src/TRAINING.md.
 
-The legacy tools in this folder use requirements.txt:
+Shared dependencies live in src/requirements.txt. The legacy requirements.txt forwards to this file:
 
 ~~~powershell
-python -m pip install -r "compress stuff/requirements.txt"
+python -m pip install -r src/requirements.txt
 ~~~
 
 # Train with the current model
@@ -63,7 +63,7 @@ python -m compressarc.analysis.plot_accuracy "../compress stuff/results_for_the_
 
 # Legacy source
 
-The remaining old inference and scoring tools are documented in LEGACY_TOOLS.md. Current model layers, configuration, initialization, and training code are under src/compressarc.
+The remaining old inference tools are documented in LEGACY_TOOLS.md. Submission scoring is available as an analysis module: `python -m compressarc.analysis.scoring submission.json` (run from `src`; pass `--solutions PATH` to select another solutions file). Current model layers, configuration, initialization, and training code are under src/compressarc.
 
 # Citation
 

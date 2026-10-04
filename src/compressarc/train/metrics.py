@@ -21,9 +21,10 @@ class SolutionTracker:
     def __init__(self, task):
         self.task = task
         shape = (task.n_test, task.n_colors + 1, task.n_x, task.n_y)
-        self.ema_logits = torch.zeros(shape)
-        self.ema_x_mask = torch.zeros((task.n_test, task.n_x))
-        self.ema_y_mask = torch.zeros((task.n_test, task.n_y))
+        # Prediction outputs from take_step are detached CPU tensors.
+        self.ema_logits = torch.zeros(shape, device="cpu")
+        self.ema_x_mask = torch.zeros((task.n_test, task.n_x), device="cpu")
+        self.ema_y_mask = torch.zeros((task.n_test, task.n_y), device="cpu")
         self.scores = {}
         self.solution_most_frequent = None
         self.solution_second_most_frequent = None

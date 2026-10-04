@@ -1,0 +1,6 @@
+matplotlib==3.10.0
+numpy==2.2.2
+torch==2.5.1
+tqdm==4.66.6
+wandb==0.28.1
+omegaconf==2.3.0

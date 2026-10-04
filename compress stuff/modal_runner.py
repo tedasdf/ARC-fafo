@@ -20,7 +20,7 @@ project_root = Path(__file__).resolve().parent
 
 image = (
     modal.Image.debian_slim(python_version='3.11')
-    .pip_install_from_requirements(str(project_root / 'requirements.txt'))
+    .pip_install_from_requirements(str(project_root.parent / 'src' / 'requirements.txt'))
     .env({
         'MPLBACKEND': 'Agg',
         'PYTHONUNBUFFERED': '1',

@@ -10,13 +10,13 @@ import modal
 
 
 SRC_ROOT = Path(__file__).resolve().parent
-REPOSITORY_ROOT = SRC_ROOT.parent
+
 REMOTE_SRC_ROOT = Path("/root/compressarc/src")
 REMOTE_OUTPUT_ROOT = Path("/tmp/compressarc-checkpoints")
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install_from_requirements(str(REPOSITORY_ROOT / "compress stuff" / "requirements.txt"))
+    .pip_install_from_requirements(str(SRC_ROOT / "requirements.txt"))
     .env({"MPLBACKEND": "Agg", "PYTHONUNBUFFERED": "1"})
     .add_local_dir(
         SRC_ROOT,

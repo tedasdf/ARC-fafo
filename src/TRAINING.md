@@ -1,5 +1,13 @@
 # Training
 
+Install the shared training dependencies from the repository root:
+
+~~~powershell
+python -m pip install -r src/requirements.txt
+~~~
+
+The standard trainer, Modal image, and scoring defaults use files under `src`. The deferred `compressarc.analysis.solve_task` worker still needs the legacy folder.
+
 From the repository root, run the standard trainer locally:
 
 ~~~powershell

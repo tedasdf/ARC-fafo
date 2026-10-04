@@ -5,8 +5,16 @@ import json
 import importlib
 import gc
 import multiprocessing
-import tqdm
 import traceback
+from pathlib import Path
+
+# The analysis package now lives under src/, while this worker still uses the
+# legacy flat modules retained in "compress stuff".
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+LEGACY_ROOT = REPOSITORY_ROOT / "compress stuff"
+SOURCE_ROOT = REPOSITORY_ROOT / "src"
+sys.path.insert(0, str(LEGACY_ROOT))
+sys.path.insert(0, str(SOURCE_ROOT))
 
 import numpy as np
 import torch
@@ -18,10 +26,6 @@ import initializers
 import multitensor_systems
 import layers
 import solution_selection
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from compressarc.analysis import visualization
-
 """
 A worker function that solves one puzzle and can be called by a custom multiprocessing runner. It is not a command-line entry point.
 """
@@ -50,7 +54,7 @@ def solve_task(task_name, split, time_limit, n_train_iterations, gpu_id, memory_
         torch.cuda.reset_peak_memory_stats()  # Measure the memory used.
 
         # Get the task
-        with open(f'dataset/arc-agi_{split}_challenges.json', 'r') as f:
+        with open(LEGACY_ROOT / 'dataset' / f'arc-agi_{split}_challenges.json', 'r') as f:
             problems = json.load(f)
         task = preprocessing.Task(task_name, problems[task_name], None)
         del problems

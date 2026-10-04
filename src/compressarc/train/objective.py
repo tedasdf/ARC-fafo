@@ -21,7 +21,7 @@ def take_step(task, model, optimizer, train_step, config=None, return_outputs=Fa
     """Compute the ARC objective, update model weights, and return scalar metrics."""
     config = config if config is not None else load_config().training
     optimizer.zero_grad()
-    logits, x_mask, y_mask, kl_amounts, kl_names = model()
+    logits, x_mask, y_mask, kl_amounts, kl_names = model.forward()
     logits = torch.cat([torch.zeros_like(logits[:, :1, :, :]), logits], dim=1)
 
     kl_components = {
