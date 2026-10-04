@@ -1,0 +1,41 @@
+model:
+  n_layers: 4
+  channel_dim_shared: 16
+  channel_dim_grid: 8
+  share_up_dim: 16
+  share_down_dim: 8
+  decoding_dim: 4
+  softmax_dim: 2
+  cummax_dim: 4
+  shift_dim: 4
+  nonlinear_dim: 16
+  shift_implementation: primitives
+  cummax_implementation: primitives
+  direction_share_implementation: primitives
+
+training:
+  split: training
+  iterations: 2000
+  learning_rate: 0.01
+  optimizer_betas: [0.5, 0.9]
+  seed: 0
+  device: auto
+  kl_weight: 1.0
+  reconstruction_weight: 10.0
+  shape_annealing_start: 0.01
+  marginal_annealing_start: 0.1
+  annealing_steps: 100
+
+logging:
+  wandb: false
+  wandb_project: compressarc
+  wandb_entity: null
+  wandb_mode: online
+  wandb_log_every: 1
+  prediction_every: 50
+  wandb_tags: []
+  latent_pca: false
+  pca_samples: 100
+  pca_kl_threshold: 1.0
+  pca_components: 3
+  pca_max_panels: 24
