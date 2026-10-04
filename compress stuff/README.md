@@ -1,6 +1,8 @@
 <a href="https://iliao2345.github.io/blog_posts/arc_agi_without_pretraining/arc_agi_without_pretraining.html"><img src="teaser_figure_w_title.png"></a>
 This is the code base for the [ARC-AGI Without Pretraining](https://iliao2345.github.io/blog_posts/arc_agi_without_pretraining/arc_agi_without_pretraining.html) project. The Kaggle competition template version can be found [here](https://www.kaggle.com/code/iliao2345/arc-agi-without-pretraining/notebook?scriptVersionId=232760209).
 
+The legacy inference, scoring, batch-execution, and analysis tools are documented in [LEGACY_TOOLS.md](LEGACY_TOOLS.md). They remain in this folder and use its flat modules and dataset.
+
 # Installation
 
 ```
@@ -135,8 +137,7 @@ A basic description of the code files in this repo:
 - `plot_problems.py`: Plots all of the ARC-AGI problems in a split.
 - `plot_accuracy.py`: Plots pass@n accuracies during/after a bulk training run with `train.py`.
 - `train.py`: Trains a model for every task in a split, plotting the accuracy. Contains code that computes the loss function. Defaults to the training split.
-- `parallel_train.py`: A multiprocessing program that schedules as many puzzles as possible in a split to be solved at the same time through `solve_task.py`, while maximizing the GPU memory usage. Defaults to the training split.
-- `scoring.py`: A script for scoring the results of `parallel_train.py`, which are better-formatted for Kaggle submissions.
+- `scoring.py`: A script for scoring a submission file against the configured ground-truth solutions.
 
 **Functionality, not for running via command line:**
 - `arc_compressor.py`: The network architecture and forward pass.

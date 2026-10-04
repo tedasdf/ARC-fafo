@@ -21,7 +21,7 @@ import solution_selection
 import visualization
 
 """
-A script that solves one puzzle, to be imported and used with parallel_train.py and multiprocessing.
+A worker function that solves one puzzle and can be called by a custom multiprocessing runner. It is not a command-line entry point.
 """
 
 def solve_task(task_name, split, time_limit, n_train_iterations, gpu_id, memory_dict, solutions_dict, error_queue):
