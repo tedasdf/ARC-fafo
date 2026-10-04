@@ -1,4 +1,5 @@
 model:
+  multitensor_constraints: strict
   n_layers: 4
   channel_dim_shared: 16
   channel_dim_grid: 8

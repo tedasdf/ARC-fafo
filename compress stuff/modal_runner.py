@@ -1,4 +1,4 @@
-"""Run a seeded strict-vs-relaxed CompressARC ablation on Modal."""
+"""Run a seeded strict-vs-relaxed ablation with the src trainer on Modal."""
 
 import json
 import random
@@ -38,8 +38,12 @@ image = (
             '*.pyc',
         ],
     )
+    .add_local_dir(
+        project_root.parent / "src",
+        remote_path=f"{REMOTE_PROJECT_DIR}/src",
+        ignore=["**/__pycache__/**", "*.pyc"],
+    )
 )
-
 app = modal.App('compressarc-strict-relaxed-ablation')
 
 
@@ -61,21 +65,22 @@ def run_condition(condition):
     wandb_project = condition['wandb_project']
     execution_tag = condition['execution_tag']
 
+    wandb_tags = (
+        f"[random-{number_of_tasks},sample-seed-{seed},"
+        f"strict-vs-relaxed,modal,{execution_tag}]"
+    )
     command = [
         sys.executable,
-        'analyze_example_wandb.py',
-        '--split', split,
-        '--task', task_id,
-        '--iterations', str(iterations),
-        '--wandb',
-        '--wandb-project', wandb_project,
-        '--wandb-tags',
-        f'random-{number_of_tasks}',
-        f'sample-seed-{seed}',
-        'strict-vs-relaxed',
-        'modal',
-        execution_tag,
-        '--multitensor-constraints', constraint_policy,
+        "src/train.py",
+        "--task", task_id,
+        "--set", f"training.split={split}",
+        "--set", f"training.iterations={iterations}",
+        "--set", f"training.seed={seed}",
+        "--set", "logging.wandb=true",
+        "--set", "logging.latent_pca=true",
+        "--set", f"logging.wandb_project={wandb_project}",
+        "--set", f"logging.wandb_tags={wandb_tags}",
+        "--set", f"model.multitensor_constraints={constraint_policy}",
     ]
 
     print(f'Starting {task_id} ({constraint_policy})')

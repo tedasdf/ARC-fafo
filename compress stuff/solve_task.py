@@ -18,7 +18,9 @@ import initializers
 import multitensor_systems
 import layers
 import solution_selection
-import visualization
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from compressarc.analysis import visualization
 
 """
 A worker function that solves one puzzle and can be called by a custom multiprocessing runner. It is not a command-line entry point.

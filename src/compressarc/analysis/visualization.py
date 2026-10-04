@@ -1,5 +1,4 @@
 import os
-
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -39,11 +38,12 @@ def plot_problem(logger, fname=None):
     """
 
     # Put all the grids beside one another on one grid
-    n_train = logger.task.n_train
-    n_test = logger.task.n_test
-    n_examples = logger.task.n_examples
-    n_x = logger.task.n_x
-    n_y = logger.task.n_y
+    task = logger.task if hasattr(logger, "task") else logger
+    n_train = task.n_train
+    n_test = task.n_test
+    n_examples = task.n_examples
+    n_x = task.n_x
+    n_y = task.n_y
     pixels = 255+np.zeros([n_train+n_test, 2*n_x+2, 2, 2*n_y+8, 3], dtype=np.uint8)
     for example_num in range(n_examples):
         if example_num < n_train:
@@ -55,7 +55,7 @@ def plot_problem(logger, fname=None):
         for mode_num, mode in enumerate(('input', 'output')):
             if subsplit == 'test' and mode == 'output':
                 continue
-            grid = np.array(logger.task.unprocessed_problem[subsplit][subsplit_example_num][mode])  # x, y
+            grid = np.array(task.unprocessed_problem[subsplit][subsplit_example_num][mode])  # x, y
             grid = (np.arange(10)==grid[:,:,None]).astype(np.float32)  # x, y, c
             grid = convert_color(grid)  # x, y, c
             repeat_grid = np.repeat(grid, 2, axis=0)
@@ -78,7 +78,7 @@ def plot_problem(logger, fname=None):
             if subsplit == 'test' and mode == 'output':
                 ax.text((2*n_y+8)+4+n_y-0.5, (2*n_x+2)*example_num+1+n_x-0.5, '?', size='xx-large', ha='center', va='center')
                 continue
-            grid = np.array(logger.task.unprocessed_problem[subsplit][subsplit_example_num][mode])  # x, y
+            grid = np.array(task.unprocessed_problem[subsplit][subsplit_example_num][mode])  # x, y
             for xline in range(grid.shape[0]+1):
                 ax.plot(((2*n_y+8)*mode_num+4+n_y-grid.shape[1]-0.5, (2*n_y+8)*mode_num+4+n_y+grid.shape[1]-0.5),
                         ((2*n_x+2)*example_num+1+n_x-grid.shape[0]+2*xline-0.5,)*2,
@@ -94,7 +94,7 @@ def plot_problem(logger, fname=None):
         return fig
     if fname is None:
         os.makedirs("plots/", exist_ok=True)
-        fname = 'plots/' + logger.task.task_name + '_problem.png'
+        fname = 'plots/' + task.task_name + '_problem.png'
     plt.savefig(fname, bbox_inches='tight', pad_inches=0)
     plt.close(fig)
 
@@ -107,11 +107,12 @@ def plot_solution(logger, fname=None):
         fname (str | None | False): Output path, the default plots/ path, or False to
                 return the unsaved Matplotlib figure.
     """
-    n_train = logger.task.n_train
-    n_test = logger.task.n_test
-    n_examples = logger.task.n_examples
-    n_x = logger.task.n_x
-    n_y = logger.task.n_y
+    task = logger.task if hasattr(logger, "task") else logger
+    n_train = task.n_train
+    n_test = task.n_test
+    n_examples = task.n_examples
+    n_x = task.n_x
+    n_y = task.n_y
 
     # Four plotted solutions
     solutions_list = [
@@ -192,8 +193,91 @@ def plot_solution(logger, fname=None):
         return fig
     if fname is None:
         os.makedirs("plots/", exist_ok=True)
-        fname = 'plots/' + logger.task.task_name + '_solutions.pdf'
+        fname = 'plots/' + task.task_name + '_solutions.pdf'
     plt.savefig(fname, bbox_inches='tight', pad_inches=0)
     plt.close(fig)
 
+def draw_grid(axis, grid, title):
+    from matplotlib.colors import ListedColormap
 
+    palette = color_list / 255.0
+    axis.set_title(title)
+    axis.set_xticks(np.arange(-0.5, grid.shape[1], 1), minor=True)
+    axis.set_yticks(np.arange(-0.5, grid.shape[0], 1), minor=True)
+    axis.grid(which="minor", color="#555555", linewidth=0.5)
+    axis.tick_params(
+        which="both",
+        bottom=False,
+        left=False,
+        labelbottom=False,
+        labelleft=False,
+    )
+    axis.imshow(grid, cmap=ListedColormap(palette), vmin=0, vmax=9, interpolation="nearest")
+
+
+def plot_predictions(task, first, second):
+    """Return a figure showing both decoded predictions for every test input."""
+    figure, axes = plt.subplots(
+        task.n_test,
+        2,
+        figsize=(6, max(2.5 * task.n_test, 3)),
+        squeeze=False,
+    )
+    for index in range(task.n_test):
+        for column, (solution, title) in enumerate(((first, "Guess 1"), (second, "Guess 2"))):
+            grid = np.asarray(solution[index], dtype=np.int64)
+            draw_grid(axes[index, column], grid, f"Test {index + 1} {title}")
+    figure.tight_layout()
+    return figure
+
+
+def plot_pca_component(component, axis_names, component_number, strength, max_panels):
+    """Return a figure showing one latent PCA component."""
+    if component.ndim == 1:
+        figure, axis = plt.subplots(figsize=(max(4, component.shape[0] * 0.35), 2.5))
+        axis.imshow(component[None, :], cmap="gray", vmin=-1, vmax=1, aspect="auto")
+        axis.set_yticks([])
+        axis.set_xlabel(axis_names[0])
+    elif component.ndim == 2:
+        figure, axis = plt.subplots(figsize=(6, 5))
+        axis.imshow(component, cmap="gray", vmin=-1, vmax=1, aspect="auto")
+        axis.set_ylabel(axis_names[0])
+        axis.set_xlabel(axis_names[1])
+    else:
+        leading_shape = component.shape[:-2]
+        panel_count = min(int(np.prod(leading_shape)), max_panels)
+        column_count = min(4, panel_count)
+        row_count = int(np.ceil(panel_count / column_count))
+        figure, axes = plt.subplots(
+            row_count,
+            column_count,
+            figsize=(4 * column_count, 3.5 * row_count),
+            squeeze=False,
+        )
+        panels = component.reshape((-1,) + component.shape[-2:])
+        for panel_number, axis in enumerate(axes.flat):
+            if panel_number >= panel_count:
+                axis.axis("off")
+                continue
+            axis.imshow(panels[panel_number], cmap="gray", vmin=-1, vmax=1, aspect="auto")
+            leading_index = np.unravel_index(panel_number, leading_shape)
+            axis.set_title(
+                ", ".join(
+                    f"{name}={index}"
+                    for name, index in zip(axis_names[:-2], leading_index)
+                )
+            )
+            axis.set_ylabel(axis_names[-2])
+            axis.set_xlabel(axis_names[-1])
+    figure.suptitle(f"Component {component_number}; strength={strength:.5g}")
+    figure.tight_layout()
+    return figure
+
+
+__all__ = [
+    "draw_grid",
+    "plot_problem",
+    "plot_solution",
+    "plot_predictions",
+    "plot_pca_component",
+]

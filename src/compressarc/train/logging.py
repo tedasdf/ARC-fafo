@@ -8,51 +8,8 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from compressarc.model.multitensor_systems import multify
+from compressarc.analysis.visualization import plot_pca_component, plot_predictions, plot_problem
 from .metrics import training_metrics_payload
-
-
-ARC_COLORS = np.array([
-    [0, 0, 0], [30, 147, 255], [249, 60, 49], [79, 204, 48], [255, 220, 0],
-    [153, 153, 153], [229, 58, 163], [255, 133, 27], [135, 216, 241], [146, 18, 49],
-], dtype=np.uint8)
-
-
-def draw_grid(axis, grid, title):
-    from matplotlib.colors import ListedColormap
-    axis.set_title(title)
-    axis.set_xticks(np.arange(-0.5, grid.shape[1], 1), minor=True)
-    axis.set_yticks(np.arange(-0.5, grid.shape[0], 1), minor=True)
-    axis.grid(which="minor", color="#555555", linewidth=0.5)
-    axis.tick_params(which="both", bottom=False, left=False, labelbottom=False, labelleft=False)
-    axis.imshow(grid, cmap=ListedColormap(ARC_COLORS / 255.0), vmin=0, vmax=9, interpolation="nearest")
-
-
-def plot_problem(task):
-    import matplotlib.pyplot as plt
-    rows = task.n_examples
-    figure, axes = plt.subplots(rows, 2, figsize=(5, max(2.2 * rows, 3)), squeeze=False)
-    for index, example in enumerate(task.unprocessed_problem["train"]):
-        draw_grid(axes[index, 0], np.asarray(example["input"]), f"Train {index + 1} input")
-        draw_grid(axes[index, 1], np.asarray(example["output"]), f"Train {index + 1} output")
-    for test_index, example in enumerate(task.unprocessed_problem["test"]):
-        row = task.n_train + test_index
-        draw_grid(axes[row, 0], np.asarray(example["input"]), f"Test {test_index + 1} input")
-        axes[row, 1].set_title(f"Test {test_index + 1} output")
-        axes[row, 1].text(0.5, 0.5, "?", ha="center", va="center", fontsize=28)
-        axes[row, 1].set_axis_off()
-    figure.tight_layout()
-    return figure
-
-
-def plot_predictions(task, first, second):
-    import matplotlib.pyplot as plt
-    figure, axes = plt.subplots(task.n_test, 2, figsize=(6, max(2.5 * task.n_test, 3)), squeeze=False)
-    for index in range(task.n_test):
-        for column, (solution, title) in enumerate(((first, "Guess 1"), (second, "Guess 2"))):
-            grid = np.asarray(solution[index], dtype=np.int64)
-            draw_grid(axes[index, column], grid, f"Test {index + 1} {title}")
-    figure.tight_layout()
-    return figure
 
 
 def initialize_wandb(config, task, model, optimizer):
@@ -88,40 +45,6 @@ def initialize_wandb(config, task, model, optimizer):
     run.define_metric("train/*", step_metric="train_step")
     run.define_metric("predictions/*", step_metric="train_step")
     return run
-
-
-def plot_pca_component(component, axis_names, component_number, strength, max_panels):
-    import matplotlib.pyplot as plt
-
-    if component.ndim == 1:
-        figure, axis = plt.subplots(figsize=(max(4, component.shape[0] * 0.35), 2.5))
-        axis.imshow(component[None, :], cmap="gray", vmin=-1, vmax=1, aspect="auto")
-        axis.set_yticks([])
-        axis.set_xlabel(axis_names[0])
-    elif component.ndim == 2:
-        figure, axis = plt.subplots(figsize=(6, 5))
-        axis.imshow(component, cmap="gray", vmin=-1, vmax=1, aspect="auto")
-        axis.set_ylabel(axis_names[0])
-        axis.set_xlabel(axis_names[1])
-    else:
-        leading_shape = component.shape[:-2]
-        panel_count = min(int(np.prod(leading_shape)), max_panels)
-        column_count = min(4, panel_count)
-        row_count = int(np.ceil(panel_count / column_count))
-        figure, axes = plt.subplots(row_count, column_count, figsize=(4 * column_count, 3.5 * row_count), squeeze=False)
-        panels = component.reshape((-1,) + component.shape[-2:])
-        for panel_number, axis in enumerate(axes.flat):
-            if panel_number >= panel_count:
-                axis.axis("off")
-                continue
-            axis.imshow(panels[panel_number], cmap="gray", vmin=-1, vmax=1, aspect="auto")
-            leading_index = np.unravel_index(panel_number, leading_shape)
-            axis.set_title(", ".join(f"{name}={index}" for name, index in zip(axis_names[:-2], leading_index)))
-            axis.set_ylabel(axis_names[-2])
-            axis.set_xlabel(axis_names[-1])
-    figure.suptitle(f"Component {component_number}; strength={strength:.5g}")
-    figure.tight_layout()
-    return figure
 
 
 def log_latent_pca(run, model, logging_config):
@@ -191,7 +114,7 @@ def log_problem(run, task):
     import matplotlib.pyplot as plt
     import wandb
 
-    figure = plot_problem(task)
+    figure = plot_problem(task, fname=False)
     run.log({"puzzle/problem": wandb.Image(figure)})
     plt.close(figure)
 

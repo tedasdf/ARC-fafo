@@ -1,4 +1,4 @@
-"""Train ARCCompressor tasks and optionally stream metrics to Weights & Biases."""
+"""Train ARCCompressor tasks locally or on Modal and optionally log to W&B."""
 
 import argparse
 from pathlib import Path
@@ -23,7 +23,10 @@ from compressarc.train.metrics import SolutionTracker
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="See TRAINING.md for Modal setup and examples.",
+    )
     parser.add_argument("--config", type=Path, help="YAML config merged over config/default.yaml")
     parser.add_argument(
         "--set",
@@ -39,6 +42,17 @@ def parse_args():
         type=Path,
         default=Path(__file__).resolve().parents[1] / "outputs" / "training",
         help="Directory used when --save-checkpoints is enabled",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=("local", "modal"),
+        default="local",
+        help="Run training locally or submit the same configured run to Modal",
+    )
+    parser.add_argument(
+        "--modal-gpu",
+        default="T4",
+        help="GPU type for the Modal backend (default: T4)",
     )
     parser.add_argument("--save-checkpoints", action="store_true")
     return parser.parse_args()
@@ -63,6 +77,11 @@ def main():
     if logging_config.wandb_log_every < 1 or logging_config.prediction_every < 1:
         raise ValueError("W&B and prediction logging intervals must be positive")
 
+    if args.backend == "modal":
+        from compressarc.train.modal_launcher import launch_modal
+
+        launch_modal(config, args)
+        return
     np.random.seed(training_config.seed)
     torch.manual_seed(training_config.seed)
     device = training_config.device
@@ -74,7 +93,7 @@ def main():
     torch.set_default_device(device)
 
     selection = [args.task] if args.task else range(10000)
-    tasks = preprocessing.preprocess_tasks(training_config.split, selection)
+    tasks = preprocessing.preprocess_tasks(training_config.split, selection, multitensor_constraints=config.model.multitensor_constraints)
     if not tasks:
         raise ValueError(f"No tasks found for split={training_config.split!r}, task={args.task!r}")
     if args.save_checkpoints:

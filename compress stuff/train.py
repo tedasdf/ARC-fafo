@@ -1,3 +1,4 @@
+import sys
 import time
 
 import numpy as np
@@ -9,7 +10,9 @@ import initializers
 import multitensor_systems
 import layers
 import solution_selection
-import visualization
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from compressarc.analysis import visualization
 
 
 """
