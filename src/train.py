@@ -15,6 +15,7 @@ from compressarc.train.logging import (
     initialize_wandb,
     log_final_results,
     log_latent_pca,
+    log_model_checkpoint,
     log_problem,
     log_training_step,
 )
@@ -54,7 +55,8 @@ def parse_args():
         default="T4",
         help="GPU type for the Modal backend (default: T4)",
     )
-    parser.add_argument("--save-checkpoints", action="store_true")
+    parser.add_argument("--save-checkpoints", action="store_true",
+                        help="Save final .pt checkpoints and upload model artifacts when W&B is enabled")
     return parser.parse_args()
 
 
@@ -134,6 +136,29 @@ def main():
                         include_prediction=prediction_step,
                     )
 
+            if args.save_checkpoints:
+                checkpoint_path = args.output_dir / f"{task.task_name}.pt"
+                serial_metrics = {key: value for key, value in last_metrics.items() if key not in ("outputs", "kl_components")}
+                torch.save(
+                    {
+                        "task": task.task_name,
+                        "split": training_config.split,
+                        "config": OmegaConf.to_container(config, resolve=True),
+                        "weights": [weight.detach().cpu() for weight in model.weights_list],
+                        "metrics": serial_metrics,
+                    },
+                    checkpoint_path,
+                )
+                log_model_checkpoint(
+                    run, checkpoint_path,
+                    metadata={
+                        "task_name": task.task_name,
+                        "split": training_config.split,
+                        "iterations_completed": training_config.iterations,
+                        "model": OmegaConf.to_container(config.model, resolve=True),
+                    },
+                )
+
             if run is not None:
                 log_final_results(run, task, tracker)
                 log_latent_pca(run, model, logging_config)
@@ -150,18 +175,7 @@ def main():
         finally:
             if run is not None:
                 run.finish()
-        if args.save_checkpoints:
-            serial_metrics = {key: value for key, value in last_metrics.items() if key not in ("outputs", "kl_components")}
-            torch.save(
-                {
-                    "task": task.task_name,
-                    "split": training_config.split,
-                    "config": OmegaConf.to_container(config, resolve=True),
-                    "weights": [weight.detach().cpu() for weight in model.weights_list],
-                    "metrics": serial_metrics,
-                },
-                args.output_dir / f"{task.task_name}.pt",
-            )
+
 
 
 if __name__ == "__main__":

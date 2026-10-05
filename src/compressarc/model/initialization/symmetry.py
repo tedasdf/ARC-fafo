@@ -17,4 +17,5 @@ def apply_weight_symmetry(initializer, layer_weights, decode_weights):
             initializer.symmetrize_xy(weights)
 
     for weights in layer_weights["direction_share_weights"]:
-        initializer.symmetrize_direction_sharing(weights)
+        if weights is not None:
+            initializer.symmetrize_direction_sharing(weights)

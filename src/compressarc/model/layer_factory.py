@@ -1,9 +1,15 @@
 """Factories for selecting concrete layer implementations."""
 
+from functools import partial
+
+from ..layers.cummax.morphological import MorphologicalMax
+from ..layers.cummax.optimisation import MorphologicalMax as OptimisedMax
 from ..layers.shift.primitives import ShiftPrimitives
+from ..layers.shift.layer import TiedShiftLayer
+from ..layers.cummax.layer import LSELayer
 from ..layers.cummax.primitives import CummaxPrimitives
 from ..layers.direction_share.primitives import DirectionSharePrimitives
-
+from ..layers.direction_share.morphological import D4DirectionShareLayer
 
 class LayerFactory:
     """Construct configured layer implementations from a small registry.
@@ -14,9 +20,13 @@ class LayerFactory:
 
     def __init__(self):
         self._implementations = {
-            "shift": {"primitives": ShiftPrimitives},
-            "cummax": {"primitives": CummaxPrimitives},
-            "direction_share": {"primitives": DirectionSharePrimitives},
+            "shift": {"primitives": ShiftPrimitives, "tied_conv": TiedShiftLayer},
+            "cummax": {
+                "primitives": CummaxPrimitives,
+                "d4": partial(LSELayer, model_type=MorphologicalMax),
+                "optimised": partial(LSELayer, model_type=OptimisedMax),
+            },
+            "direction_share": {"primitives": DirectionSharePrimitives, "d4": D4DirectionShareLayer},
         }
 
     def register(self, layer_name, implementation_name, implementation):

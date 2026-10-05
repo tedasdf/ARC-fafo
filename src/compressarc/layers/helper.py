@@ -1,4 +1,7 @@
 # layers/helper.py
+from contextlib import contextmanager
+from contextvars import ContextVar
+import time
 import itertools
 import torch
 from ..model import multitensor_systems
@@ -183,3 +186,39 @@ def make_directional_layer(fn, diagonal_fn):
             result_tensors.append(result_list)
         return torch.cat(result_tensors, dim=-1)  # cat channel dim together
     return directional_layer
+
+
+_timings = ContextVar('morphology_timings', default=None)
+
+
+@contextmanager
+def measure_morphology(enabled=False):
+    """Collect synchronized forward wall time, excluding rotations and backward."""
+    totals = {}
+    token = _timings.set(totals if enabled else None)
+    try:
+        yield totals
+    finally:
+        _timings.reset(token)
+
+
+def _measure_call(fn, x, name, totals=None):
+    if totals is None:
+        totals = _timings.get()
+    if totals is None:
+        return fn(x)
+    if x.is_cuda:
+        torch.cuda.synchronize(x.device)
+    started = time.perf_counter()
+    result = fn(x)
+    if x.is_cuda:
+        torch.cuda.synchronize(x.device)
+    seconds = time.perf_counter() - started
+    key = f'timing/{name}_forward_seconds'
+    totals[key] = totals.get(key, 0.0) + seconds
+    key = f'timing/{name}_calls'
+    totals[key] = totals.get(key, 0) + 1
+    return result
+
+
+

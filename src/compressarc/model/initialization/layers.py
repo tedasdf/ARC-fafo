@@ -33,7 +33,8 @@ def initialize_layer_weights(initializer, config):
             initializer.initialize_multiresidual(config.shift_dim, config.shift_dim)
         )
         weights["direction_share_weights"].append(
-            initializer.initialize_multidirection_share()
+            None if config.direction_share_implementation == "d4"
+            else initializer.initialize_multidirection_share()
         )
         weights["nonlinear_weights"].append(
             initializer.initialize_multiresidual(config.nonlinear_dim, config.nonlinear_dim)

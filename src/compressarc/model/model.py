@@ -94,18 +94,26 @@ class ARCCompressor:
         self.latent_decoder = LatentDecoder(multify)
         self.output_heads = OutputHeads()
         self.share = MultitensorShare()
-        self.cummax = factory.create_cummax(
-            self.config.cummax_implementation,
-            multify=multify,
-        )
-        self.shift = factory.create_shift(
-            self.config.shift_implementation,
-            multify=multify,
-        )
-        self.direction_share = factory.create_direction_share(
-            self.config.direction_share_implementation,
-            multify=multify,
-        )
+        self._layer_call_options = {}
+        for name in ("cummax", "shift", "direction_share"):
+            implementation = getattr(self.config, f"{name}_implementation")
+            options = {}
+            if implementation != "primitives":
+                options["n_layers"] = self.n_layers
+                if name == "cummax":
+                    options.update(
+                        height=self.multitensor_system.n_x,
+                        width=self.multitensor_system.n_y,
+                        tau=self.config.get("lse_tau", 0.1),
+                        timing=self.config.get("layer_timing", False),
+                    )
+            layer = factory.create(name, implementation, multify=multify, **options)
+            setattr(self, name, layer)
+            self._layer_call_options[name] = implementation != "primitives"
+            if implementation != "primitives":
+                anchor = self.weights_list[0]
+                layer.to(device=anchor.device, dtype=anchor.dtype)
+                self.weights_list.extend(layer.parameters())
 
     def forward(self):
         x, kl_amounts, kl_names = self.latent_decoder(
@@ -133,6 +141,7 @@ class ARCCompressor:
                 pre_norm=False,
                 post_norm=True,
                 use_bias=False,
+                **({"layer_index": layer_num} if self._layer_call_options["cummax"] else {}),
             )
             x = self.shift(
                 x,
@@ -141,12 +150,14 @@ class ARCCompressor:
                 pre_norm=False,
                 post_norm=True,
                 use_bias=False,
+                **({"layer_index": layer_num} if self._layer_call_options["shift"] else {}),
             )
             x = self.direction_share(
                 x,
                 weights["direction_share"],
                 pre_norm=True,
                 use_bias=False,
+                **({"layer_index": layer_num} if self._layer_call_options["direction_share"] else {}),
             )
             x = nonlinear(
                 x,

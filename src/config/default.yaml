@@ -10,8 +10,12 @@ model:
   cummax_dim: 4
   shift_dim: 4
   nonlinear_dim: 16
+  # shift: primitives | tied_conv (projected residual)
   shift_implementation: primitives
+  # cummax: primitives | d4 (reference LSE) | optimised (strided LSE)
   cummax_implementation: primitives
+  lse_tau: 0.1
+  layer_timing: false
   direction_share_implementation: primitives
 
 training:

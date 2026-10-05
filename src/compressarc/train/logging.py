@@ -1,6 +1,7 @@
 """Puzzle, prediction, W&B, and optional latent PCA logging helpers."""
 
 import ast
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -153,3 +154,20 @@ def log_final_results(run, task, tracker):
         guess_2_correct = hash(tracker.solution_second_most_frequent) == task.solution_hash
         run.summary["top_1_correct"] = guess_1_correct
         run.summary["pass_2_correct"] = guess_1_correct or guess_2_correct
+
+
+
+def log_model_checkpoint(run, checkpoint_path, *, metadata=None):
+    """Attach a saved .pt checkpoint to an active W&B run as a model artifact."""
+    if run is None:
+        return None
+    import wandb
+
+    checkpoint_path = Path(checkpoint_path).resolve(strict=True)
+    artifact = wandb.Artifact(
+        name=f"model-{run.id}",
+        type="model",
+        metadata={} if metadata is None else dict(metadata),
+    )
+    artifact.add_file(str(checkpoint_path), name=checkpoint_path.name)
+    return run.log_artifact(artifact, aliases=["latest"])
