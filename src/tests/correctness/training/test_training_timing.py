@@ -13,6 +13,18 @@ class RecordingRun:
         self.config = {}
         self.summary = {}
         self.finished = False
+        self.history = []
+        self.definitions = []
+        self.log_step_counts = []
+        self.completed_steps = lambda: 0
+
+    def log(self, record):
+        assert not self.finished
+        self.history.append(dict(record))
+        self.log_step_counts.append(self.completed_steps())
+
+    def define_metric(self, name, **kwargs):
+        self.definitions.append((name, kwargs))
 
     def finish(self):
         self.finished = True
@@ -37,6 +49,7 @@ def test_clean_and_profile_passes_share_training_and_log_distinct_metrics(monkey
 
     def capture_run(*args):
         run = RecordingRun()
+        run.completed_steps = lambda: len(steps)
         runs.append(run)
         return run
 
@@ -74,6 +87,17 @@ def test_clean_and_profile_passes_share_training_and_log_distinct_metrics(monkey
     for clean_weight, profiled_weight in zip(models[0].weights_list, models[1].weights_list):
         torch.testing.assert_close(clean_weight, profiled_weight, rtol=0, atol=0)
     assert runs[0].summary == clean and runs[1].summary == profiled
+    assert runs[0].history == [{"train_step": 0, "timing/first_step_ms": clean["timing/first_step_ms"]}]
+    assert runs[0].log_step_counts == [3]  # First-step record also flushes after measurement.
+    assert [record["train_step"] for record in runs[1].history] == [1, 2]
+    assert runs[1].log_step_counts == [6, 6]  # Flush after every training step has finished.
+    assert ("timing/*", {"step_metric": "train_step"}) in runs[1].definitions
+    for record in runs[1].history:
+        assert set(record) == {"train_step", *OPERATIONS}
+        assert all(record[key] >= 0 for key in OPERATIONS)
+    for key in OPERATIONS:
+        mean = sum(record[key] for record in runs[1].history) / 2
+        assert runs[1].summary[key] == pytest.approx(mean)
     assert all(run.finished for run in runs)
     assert [run.config["benchmark_pass"] for run in runs] == ["clean", "operations"]
     assert all(run.config["actual_training_iterations"] == 3 for run in runs)

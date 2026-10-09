@@ -70,8 +70,13 @@ W&B initialization and summary writes happen outside timed regions. Benchmark
 mode skips predictions/images, PCA, progress updates, and checkpoints; scalar
 transfers already inside `take_step` remain included. The loss-phase KL-component
 transfers and final metric/output transfers are assigned distinct boundaries.
-Metrics use the definitions in `training_metrics_spec.py`; they are written to
-W&B run summaries, and task/model settings remain in the existing W&B config.
+Metrics use the definitions in `training_metrics_spec.py`. The operation pass
+buffers one timing record per measured step, then replays them in step order
+to W&B after the timed pass. Charts use `train_step` (10-39 by default); run
+summaries retain measured means. Clean setup, block time, and memory peaks
+remain summary metrics. The clean run also records `timing/first_step_ms` at
+`train_step=0` in history, buffered until measurement finishes. Task/model
+settings remain in the existing W&B config.
 
 For one task/variant or a different measured block:
 

@@ -36,19 +36,28 @@ class OperationTimer:
         if self.events:
             self.events[index].record()
 
-    def summary(self):
+    def records(self, first_step=0):
         if len(self.times) != self.capacity:
             raise RuntimeError("Incomplete profiling pass")
-        result = {}
-        for offset, name in enumerate(self.names):
-            starts = range(offset, self.capacity, len(self.boundaries))
-            if self.events:
-                values = [self.events[i].elapsed_time(self.events[i + 1]) for i in starts]
-            else:
-                # CPU-only smoke runs use host time; label the method in run config.
-                values = [1000 * (self.times[i + 1] - self.times[i]) for i in starts]
-            result[f"timing/{name}_ms"] = sum(values) / len(values)
-        return result
+        records = []
+        for index, start in enumerate(range(0, self.capacity, len(self.boundaries))):
+            record = {"train_step": first_step + index}
+            for offset, name in enumerate(self.names):
+                boundary = start + offset
+                if self.events:
+                    elapsed = self.events[boundary].elapsed_time(self.events[boundary + 1])
+                else:
+                    elapsed = 1000 * (self.times[boundary + 1] - self.times[boundary])
+                record[f"timing/{name}_ms"] = elapsed
+            records.append(record)
+        return records
+
+    def summary(self):
+        records = self.records()
+        return {
+            key: sum(record[key] for record in records) / len(records)
+            for key in OPERATIONS
+        }
 
 
 class TrainingTiming:
@@ -57,6 +66,7 @@ class TrainingTiming:
         self.pass_name = pass_name
         self.warmup = warmup
         self.measured = measured
+        self.history = []
         self.metrics = {
             "timing/warmup_iterations": warmup,
             "timing/measured_iterations": measured,
@@ -89,6 +99,7 @@ class TrainingTiming:
         if self.pass_name == "clean":
             _, first_ms = self.wall(first)
             self.metrics["timing/first_step_ms"] = first_ms
+            self.history.append({"train_step": 0, "timing/first_step_ms": first_ms})
         else:
             first()
         for step in range(1, self.warmup):
@@ -114,6 +125,7 @@ class TrainingTiming:
             for step in range(self.warmup, self.warmup + self.measured):
                 last = take_step(task, model, optimizer, step, config, phase_callback=timer.mark)
             synchronize(self.device)
+            self.history = timer.records(first_step=self.warmup)
             self.metrics.update(timer.summary())
         if not math.isfinite(last["loss"]):
             raise RuntimeError("Non-finite loss after timing pass")

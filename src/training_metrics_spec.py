@@ -20,7 +20,9 @@ TRAINING = {
     "timing/mean_step_ms": "Block time divided by the number of measured iterations.",
 }
 
-# Operations: mean CUDA-event milliseconds per measured iteration on GPU.
+# Operations: per-step CUDA-event milliseconds in W&B history on GPU.
+# Run summaries contain the mean of the measured step values.
+# History is buffered and replayed in step order after profiling finishes.
 # Collect in a separate instrumented run with the same task, configuration,
 # seed, warmup count, and measured count. TRAINING comes from the clean run.
 # Event spans include dispatch gaps; they are not pure GPU busy time.

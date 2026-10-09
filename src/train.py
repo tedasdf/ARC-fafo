@@ -158,6 +158,12 @@ def main(argv=None):
                     })
                 result = timing.train(task, model, optimizer, training_config, take_step)
                 if run is not None:
+                    if timing.history:
+                        run.define_metric("timing/*", step_metric="train_step")
+                        # Replay first-step/profiling records only after measurement.
+                        for record in timing.history:
+                            run.log(record)
+                    # Keep agreed means in summaries rather than the last sample.
                     run.summary.update(result)
                 print(json.dumps({"task": task.task_name,
                                   "configuration": config.get("experiment", {}).get(
