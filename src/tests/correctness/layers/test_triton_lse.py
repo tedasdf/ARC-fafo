@@ -120,7 +120,7 @@ def test_triton_diagonal_matches_optimisation_output_and_gradients(shape, tau, t
     actual = triton_model(x_triton)
     torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-6)
 
-    # Use identical, nonuniform upstream gradients to check the full backward map.
+    # Use identical, nonuniform  plus gradients to check the full backward map.
     upstream = torch.randn_like(expected)
     expected.backward(upstream)
     actual.backward(upstream)

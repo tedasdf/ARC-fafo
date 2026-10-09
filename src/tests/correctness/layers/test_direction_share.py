@@ -16,7 +16,7 @@ def model_with_distinct_orbits():
         model.theta.copy_(torch.arange(1, 11, dtype=torch.float64) / 10)
     return model
 
-
+#TODO: equivaraince shouldnt be in this file
 @pytest.mark.parametrize('rotation,reflection', list(product(range(4), [False, True])))
 def test_d4_direction_share_equivariance(rotation, reflection):
     model = model_with_distinct_orbits()

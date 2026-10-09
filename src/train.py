@@ -1,6 +1,7 @@
 """Train ARCCompressor tasks locally or on Modal and optionally log to W&B."""
 
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
@@ -23,11 +24,15 @@ from compressarc.train import take_step
 from compressarc.train.metrics import SolutionTracker
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=__doc__,
         epilog="See TRAINING.md for Modal setup and examples.",
     )
+    parser.add_argument("--mode", choices=("train", "benchmark"), default="train")
+    parser.add_argument("--benchmark-pass", choices=("clean", "operations"), default="clean")
+    parser.add_argument("--warmup-iterations", type=int, default=10)
+    parser.add_argument("--measured-iterations", type=int, default=30)
     parser.add_argument("--config", type=Path, help="YAML config merged over config/default.yaml")
     parser.add_argument(
         "--set",
@@ -57,17 +62,26 @@ def parse_args():
     )
     parser.add_argument("--save-checkpoints", action="store_true",
                         help="Save final .pt checkpoints and upload model artifacts when W&B is enabled")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def merge_cli_config(args):
     return load_config(args.config, args.overrides)
 
 
-def main():
-    args = parse_args()
+def main(argv=None):
+    args = parse_args() if argv is None else parse_args(argv)
+    mode = getattr(args, "mode", "train")
     config = merge_cli_config(args)
     training_config, logging_config = config.training, config.logging
+    if mode == "benchmark":
+        if not args.task or args.backend != "local":
+            raise ValueError("Benchmark mode requires --task and the local backend")
+        if args.warmup_iterations < 1 or args.measured_iterations < 1:
+            raise ValueError("Warmup and measured iteration counts must be positive")
+        training_config.iterations = args.warmup_iterations + args.measured_iterations
+        if config.model.layer_timing:
+            raise ValueError("Disable model.layer_timing for clean/profile pass separation")
     if training_config.iterations < 1 or training_config.learning_rate <= 0 or training_config.annealing_steps < 1:
         raise ValueError("iterations, learning_rate, and annealing_steps must be positive")
     if logging_config.latent_pca and (
@@ -89,27 +103,66 @@ def main():
     device = training_config.device
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    if device == "cuda" and not torch.cuda.is_available():
+    device_object = torch.device(device)
+    if device_object.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested, but no CUDA device is available")
+    if device_object.type == "cuda":
+        torch.cuda.set_device(device_object.index or 0)
     training_config.device = device
     torch.set_default_device(device)
 
+    timing = None
+    if mode == "benchmark":
+        from compressarc.train.timing import TrainingTiming
+        timing = TrainingTiming(device_object, args.benchmark_pass,
+                                args.warmup_iterations, args.measured_iterations)
+
+    def setup_call(metric_name, fn):
+        return timing.setup_call(metric_name, fn) if timing is not None else fn()
+
     selection = [args.task] if args.task else range(10000)
-    tasks = preprocessing.preprocess_tasks(training_config.split, selection, multitensor_constraints=config.model.multitensor_constraints)
+    tasks = setup_call("setup/preprocessing_ms", lambda: preprocessing.preprocess_tasks(
+        training_config.split, selection, multitensor_constraints=config.model.multitensor_constraints,
+    ))
     if not tasks:
         raise ValueError(f"No tasks found for split={training_config.split!r}, task={args.task!r}")
     if args.save_checkpoints:
         args.output_dir.mkdir(parents=True, exist_ok=True)
 
     for task in tasks:
-        model = ARCCompressor(task, config.model)
-        optimizer = torch.optim.Adam(
+        model = setup_call("setup/model_ms", lambda: ARCCompressor(task, config.model))
+        optimizer = setup_call("setup/optimizer_ms", lambda: torch.optim.Adam(
             model.weights_list,
             lr=training_config.learning_rate,
             betas=tuple(training_config.optimizer_betas),
-        )
+        ))
         tracker = SolutionTracker(task)
+        if timing is not None:
+            timing.finish_setup()
         run = initialize_wandb(config, task, model, optimizer)
+        if timing is not None:
+            try:
+                if run is not None:
+                    variant = config.model.cummax_implementation
+                    run.name = f"{task.task_name}-{variant}-{args.benchmark_pass}"
+                    run.config.update({
+                        "mode": "benchmark", "benchmark_pass": args.benchmark_pass,
+                        "warmup_iterations": args.warmup_iterations,
+                        "measured_iterations": args.measured_iterations,
+                        "actual_training_iterations": args.warmup_iterations + args.measured_iterations,
+                        "operation_clock": "cuda_events" if device_object.type == "cuda" else "host_wall_cpu_smoke",
+                        "gpu_name": torch.cuda.get_device_name(device_object) if device_object.type == "cuda" else None,
+                    })
+                result = timing.train(task, model, optimizer, training_config, take_step)
+                if run is not None:
+                    run.summary.update(result)
+                print(json.dumps({"task": task.task_name,
+                                  "variant": config.model.cummax_implementation,
+                                  "pass": args.benchmark_pass, "metrics": result}, indent=2))
+                return result
+            finally:
+                if run is not None:
+                    run.finish()
         log_problem(run, task)
 
         last_metrics = None
