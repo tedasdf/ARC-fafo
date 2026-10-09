@@ -96,16 +96,17 @@ python src/train.py --mode benchmark --task 694f12f3 --benchmark-pass clean --se
 |---|---|---|---|
 | original.yaml | primitives | primitives | primitives |
 | projected_shift.yaml | tied_conv | primitives | primitives |
-| projected_direction_share.yaml | primitives | projected_d4 | primitives |
+| projected_direction_share.yaml | primitives | d4 | primitives |
 | projected_cummax_lse.yaml | primitives | primitives | optimised LSE |
-| all_projected.yaml | tied_conv | projected_d4 | optimised LSE |
+| all_projected.yaml | tied_conv | d4 | optimised LSE |
 
 Each YAML inherits other model and training settings from `config/default.yaml`.
 The projected D4 implementation migrates the pilot's
 `x + W2 D4(W1 normalize(x))`, using 8-channel projections, XY symmetrization,
 and one 10-orbit D4 mixer per depth. Legacy directional pair weights consume
 their original initialization sequence but are removed from the optimizer.
-The existing direct `d4` implementation remains available separately.
+The `d4` factory selection uses this projected wrapper in
+`direction_share/morphological.py`; there is no separate projected implementation file.
 
 The launcher no longer has a variant flag or silently overrides model choices.
 Pass `--config` repeatedly to choose several YAMLs; omit it to run all five.

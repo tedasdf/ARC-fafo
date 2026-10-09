@@ -84,10 +84,16 @@ def test_factory_d4_multitensor_wrapper_and_optimizer():
     inputs = system.make_multitensor()
     for dims in system:
         inputs[dims] = torch.randn(system.shape(dims, extra_dim=2), dtype=torch.float64)
+    weights = system.make_multitensor()
+    for dims in system:
+        weights[dims] = (
+            [[torch.eye(2, dtype=torch.float64), None],
+             [torch.eye(2, dtype=torch.float64), None]] if dims[2] else None
+        )
     layer = LayerFactory().create_direction_share('d4', multify=multify, n_layers=2).double()
     assert layer.models[0].theta is not layer.models[1].theta
     for index in range(2):
-        actual = layer(inputs, None, pre_norm=True, use_bias=False, layer_index=index)
+        actual = layer(inputs, weights, pre_norm=True, use_bias=False, layer_index=index)
         for dims in system:
             if not dims[2]:
                 assert actual[dims] is inputs[dims]
@@ -97,7 +103,7 @@ def test_factory_d4_multitensor_wrapper_and_optimizer():
                 torch.testing.assert_close(actual[dims], inputs[dims] + mixed)
     optimizer = torch.optim.SGD(layer.parameters(), lr=0.1)
     before = [m.theta.detach().clone() for m in layer.models]
-    loss = sum(layer(inputs, layer_index=i, pre_norm=False)[[1, 0, 1, 1, 1]].square().sum()
+    loss = sum(layer(inputs, weights, layer_index=i, pre_norm=False)[[1, 0, 1, 1, 1]].square().sum()
                for i in range(2))
     loss.backward()
     optimizer.step()

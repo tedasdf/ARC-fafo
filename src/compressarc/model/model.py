@@ -110,7 +110,7 @@ class ARCCompressor:
             self.layer_weights[index]["direction_share"] = weights
 
     def _init_layers(self):
-        if self.config.direction_share_implementation == "projected_d4":
+        if self.config.direction_share_implementation == "d4":
             self._init_projected_direction_share()
         factory = LayerFactory()
         self.latent_decoder = LatentDecoder(multify)

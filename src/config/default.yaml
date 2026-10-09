@@ -16,7 +16,7 @@ model:
   cummax_implementation: primitives
   lse_tau: 0.1
   layer_timing: false
-  # direction share: primitives | d4 (direct residual) | projected_d4 (pilot projections)
+  # direction share: primitives | d4 (projected pilot wrapper)
   direction_share_implementation: primitives
   direction_share_dim: 8
 

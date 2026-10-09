@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from ..helper import apply_residual
+
 
 class D4DirectionShare(nn.Module):
     """
@@ -87,7 +89,7 @@ def compressarc_direction_share(dims, x, model):
 
 
 class D4DirectionShareLayer(nn.Module):
-    """Multitensor residual D4 mixing, with independent weights per model layer."""
+    """x + W2 D4(W1 normalize(x)); one D4 mixer per model depth."""
 
     def __init__(self, multify, n_layers=1):
         super().__init__()
@@ -96,20 +98,21 @@ class D4DirectionShareLayer(nn.Module):
         def apply_one(dims, x, weights, *, pre_norm=True, use_bias=False, layer_index=0):
             if not dims[2]:
                 return x
-            from ..helper import normalize
-            z = normalize(x) if pre_norm else x
             axis = sum(dims[:2])
             model = self.models[layer_index]
-            if axis == 0:
-                mixed = model(z.unsqueeze(0)).squeeze(0)
-            else:
-                mixed = model(z.movedim(axis, 1)).movedim(1, axis)
-            return x + mixed
+
+            def mix(projected):
+                if axis == 0:
+                    return model(projected.unsqueeze(0)).squeeze(0)
+                return model(projected.movedim(axis, 1)).movedim(1, axis)
+
+            return apply_residual(x, weights, mix, pre_norm=pre_norm, use_bias=False)
 
         self._apply_multitensor = multify(apply_one)
 
-    def forward(self, x, weights=None, *, pre_norm=True, use_bias=False, layer_index=0):
+    def forward(self, x, weights, *, pre_norm=True, use_bias=False, layer_index=0):
         if use_bias:
-            raise ValueError('D4 direction sharing does not support bias')
-        return self._apply_multitensor(x, weights, pre_norm=pre_norm,
-                                      use_bias=False, layer_index=layer_index)
+            raise ValueError("D4 direction sharing does not support bias")
+        return self._apply_multitensor(
+            x, weights, pre_norm=pre_norm, use_bias=False, layer_index=layer_index,
+        )
