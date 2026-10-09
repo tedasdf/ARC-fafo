@@ -2,8 +2,7 @@
 import torch
 import torch.nn as nn
 
-from ..helper import _measure_call, measure_morphology
-from .layer import directional_lse
+from ..helper import _measure_call
 
 
 class MorphologicalMax(nn.Module):
