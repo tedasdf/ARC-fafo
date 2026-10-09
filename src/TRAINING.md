@@ -125,3 +125,28 @@ python src/train.py --config src/config/models/all_projected.yaml --task 694f12f
 These preserve the migrated layer architecture; pilot training settings such as
 seed 42, training length, and early stopping are not implicitly imported. Set
 those explicitly if needed. The LSE YAML uses the optimized PyTorch LSE backend.
+
+
+## Explicit optimisation and Triton cummax configs
+
+`projected_cummax_optimisation.yaml` selects the same optimized PyTorch backend
+as the existing `projected_cummax_lse.yaml`. `projected_cummax_triton.yaml` selects
+a full LSE wrapper with Triton cardinal and diagonal forward/backward. Both replace only cummax and preserve projections/masks/residuals.
+They are additional explicit configs; the launcher's original five defaults
+are unchanged.
+
+```bash
+python src/run_training_timing.py --config src/config/models/projected_cummax_optimisation.yaml --config src/config/models/projected_cummax_triton.yaml --set training.device=cuda:0
+```
+
+Triton requires Linux CUDA and float32. Install `src/requirements.txt` on the L4
+and verify the GPU parity tests before comparing performance:
+
+```bash
+cd src
+python -m pytest tests/correctness/layers/test_triton_lse.py -q
+```
+
+Both canonical scans use Triton; direction rotations, projections, masking,
+and residual operations remain standard PyTorch wrapper logic. Optional imports
+are lazy so ordinary CPU/PyTorch runs do not require Triton.

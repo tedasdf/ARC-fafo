@@ -12,7 +12,7 @@ model:
   nonlinear_dim: 16
   # shift: primitives | tied_conv (projected residual)
   shift_implementation: primitives
-  # cummax: primitives | d4 (reference LSE) | optimised (strided LSE)
+  # cummax: primitives | d4 (reference LSE) | optimised | triton (GPU axis + diagonal)
   cummax_implementation: primitives
   lse_tau: 0.1
   layer_timing: false

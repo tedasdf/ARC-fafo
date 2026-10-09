@@ -30,7 +30,7 @@ per task/variant, not 10 total.
 
 The current full-model cummax variants are `primitives`, `d4`, and `optimised`.
 They are runtime alternatives; primitive cummax and LSE need not produce
-numerically equal losses. Triton is not yet a full factory model variant.
+numerically equal losses. The optional `triton` factory variant uses Triton axis and diagonal LSE; its explicit YAML requires Linux CUDA/FP32.
 
 ## Existing W&B training metrics
 

@@ -7,6 +7,8 @@ from torch.autograd.function import once_differentiable
 import triton
 import triton.language as tl
 
+from .optimisation import MorphologicalMax as OptimisedMorphologicalMax
+
 @triton.jit
 def axis_lse_kernel(
     x_ptr,
@@ -56,6 +58,126 @@ def axis_lse_kernel(
         out_ptr + row * W + i,
         y,
     )
+
+
+@triton.jit
+def axis_lse_bwd_dx_kernel(
+    x_ptr, kernel_ptr, y_ptr, dy_ptr, dx_ptr,
+    W: tl.constexpr, TAU: tl.constexpr, BLOCK: tl.constexpr,
+):
+    # One program owns an input element and gathers future outputs in its row.
+    pid = tl.program_id(0)
+    position = pid % W
+    u = tl.arange(0, BLOCK)
+    valid = (u < W - position) & (u < W)
+    future_y = tl.load(y_ptr + pid + u, mask=valid, other=0.0)
+    future_dy = tl.load(dy_ptr + pid + u, mask=valid, other=0.0)
+    k_vals = tl.load(kernel_ptr + u, mask=valid, other=0.0)
+    x_value = tl.load(x_ptr + pid)
+    LOG2E: tl.constexpr = 1.4426950408889634
+    log_probability = tl.where(
+        valid, (x_value + k_vals - future_y) * (LOG2E / TAU), -float("inf")
+    )
+    dx = tl.sum(future_dy * tl.exp2(log_probability), axis=0)
+    tl.store(dx_ptr + pid, dx)
+
+
+@triton.jit
+def axis_lse_bwd_dk_kernel(
+    x_ptr, kernel_ptr, y_ptr, dy_ptr, dk_ptr,
+    W: tl.constexpr, TAU: tl.constexpr, BLOCK: tl.constexpr,
+):
+    # Every output contributes to all causal offsets; the tail remains unused.
+    pid = tl.program_id(0)
+    position = pid % W
+    u = tl.arange(0, BLOCK)
+    valid = (u <= position) & (u < W)
+    x_vals = tl.load(x_ptr + pid - u, mask=valid, other=0.0)
+    k_vals = tl.load(kernel_ptr + u, mask=valid, other=0.0)
+    y = tl.load(y_ptr + pid)
+    dy = tl.load(dy_ptr + pid)
+    LOG2E: tl.constexpr = 1.4426950408889634
+    log_probability = tl.where(
+        valid, (x_vals + k_vals - y) * (LOG2E / TAU), -float("inf")
+    )
+    tl.atomic_add(dk_ptr + u, dy * tl.exp2(log_probability), mask=valid)
+
+
+class AxisLSEFunction(torch.autograd.Function):
+    """First-order FP32 CUDA LSE along the last axis; tau is constant."""
+
+    @staticmethod
+    def forward(ctx, x, kernel, tau):
+        if x.ndim < 1 or min(x.shape) < 1:
+            raise ValueError("Expected nonempty x with at least one axis")
+        width = x.shape[-1]
+        if kernel.ndim != 1 or kernel.numel() < width:
+            raise ValueError("Kernel must be 1D with at least W entries")
+        if not x.is_cuda or not kernel.is_cuda or x.device != kernel.device:
+            raise ValueError("x and kernel must be on the same CUDA device")
+        if x.dtype != torch.float32 or kernel.dtype != torch.float32:
+            raise TypeError("V1 supports float32 x and kernel")
+        if isinstance(tau, torch.Tensor):
+            raise TypeError("tau must be a constant Python number")
+        tau = float(tau)
+        if not math.isfinite(tau) or tau <= 0:
+            raise ValueError("tau must be positive and finite")
+        x, kernel = x.contiguous(), kernel.contiguous()
+        block = triton.next_power_of_2(width)
+        out = torch.empty_like(x)
+        with torch.cuda.device(x.device):
+            axis_lse_kernel[(x.numel(),)](
+                x, kernel, out, W=width, TAU=tau, BLOCK=block,
+            )
+        ctx.save_for_backward(x, kernel, out)
+        ctx.width, ctx.tau, ctx.block = width, tau, block
+        return out
+
+    @staticmethod
+    @once_differentiable
+    def backward(ctx, grad_out):
+        x, kernel, y = ctx.saved_tensors
+        grad_out = grad_out.contiguous()
+        grid = (x.numel(),)
+        dx, dk = None, None
+        with torch.cuda.device(x.device):
+            if ctx.needs_input_grad[0]:
+                dx = torch.empty_like(x)
+                axis_lse_bwd_dx_kernel[grid](
+                    x, kernel, y, grad_out, dx,
+                    W=ctx.width, TAU=ctx.tau, BLOCK=ctx.block,
+                )
+            if ctx.needs_input_grad[1]:
+                dk = torch.zeros_like(kernel)
+                axis_lse_bwd_dk_kernel[grid](
+                    x, kernel, y, grad_out, dk,
+                    W=ctx.width, TAU=ctx.tau, BLOCK=ctx.block,
+                )
+        return dx, dk, None
+
+
+class FusedAxisLSE(nn.Module):
+    """Trainable last-axis LSE backed by the Triton axis operation."""
+
+    def __init__(self, max_length, tau=0.1):
+        super().__init__()
+        if not isinstance(max_length, int) or max_length < 1:
+            raise ValueError("max_length must be a positive integer")
+        if isinstance(tau, torch.Tensor):
+            raise TypeError("tau must be a constant Python number")
+        tau = float(tau)
+        if not math.isfinite(tau) or tau <= 0:
+            raise ValueError("tau must be positive and finite")
+        self.tau = tau
+        self.kernel = nn.Parameter(torch.zeros(max_length))
+
+    def forward(self, x):
+        if x.ndim < 1:
+            raise ValueError("Expected x with at least one axis")
+        length = x.shape[-1]
+        if length > self.kernel.numel():
+            raise ValueError("Input axis exceeds max_length")
+        return AxisLSEFunction.apply(x, self.kernel[:length], self.tau)
 
 @triton.jit
 def diagonal_lse_kernel(
@@ -235,3 +357,17 @@ class FusedDiagonalLSE(nn.Module):
         if length > self.kernel.numel():
             raise ValueError('Input diagonal exceeds max_length')
         return DiagonalLSEFunction.apply(x, self.kernel[:length], self.tau)
+
+
+# Keep the same directional interface and parameter/state-dict layout; both
+# canonical axis and diagonal operations now use Triton forward/backward.
+
+
+class TritonMorphologicalMax(OptimisedMorphologicalMax):
+    """Full directional LSE interface with Triton cardinal and diagonal scans."""
+
+    def _axis_lse(self, x):
+        return AxisLSEFunction.apply(x, self.kernel, self.tau)
+
+    def _diagonal_lse(self, x):
+        return DiagonalLSEFunction.apply(x, self.diagonal_kernel, self.tau)

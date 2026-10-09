@@ -11,6 +11,20 @@ from ..layers.cummax.primitives import CummaxPrimitives
 from ..layers.direction_share.primitives import DirectionSharePrimitives
 from ..layers.direction_share.morphological import D4DirectionShareLayer
 
+
+def create_triton_cummax(**kwargs):
+    """Import the optional CUDA backend only when its YAML selects it."""
+    try:
+        from ..layers.cummax.triton_op import TritonMorphologicalMax
+    except ModuleNotFoundError as error:
+        if error.name == "triton":
+            raise RuntimeError(
+                "Triton cummax requires Triton on Linux with a CUDA GPU; "
+                "install src/requirements.txt in that environment."
+            ) from error
+        raise
+    return LSELayer(model_type=TritonMorphologicalMax, **kwargs)
+
 class LayerFactory:
     """Construct configured layer implementations from a small registry.
 
@@ -25,6 +39,7 @@ class LayerFactory:
                 "primitives": CummaxPrimitives,
                 "d4": partial(LSELayer, model_type=MorphologicalMax),
                 "optimised": partial(LSELayer, model_type=OptimisedMax),
+                "triton": create_triton_cummax,
             },
             "direction_share": {"primitives": DirectionSharePrimitives, "d4": D4DirectionShareLayer},
         }
