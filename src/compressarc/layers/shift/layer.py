@@ -46,9 +46,9 @@ def tied_directional_shift(x, masks, model):
 class TiedShiftLayer(nn.Module):
     """Use one trainable tied convolution per model depth."""
 
-    def __init__(self, multify, n_layers=1):
+    def __init__(self, multify, n_layers=1, *, model_type=TiedDirectionalConv):
         super().__init__()
-        self.models = nn.ModuleList([TiedDirectionalConv() for _ in range(n_layers)])
+        self.models = nn.ModuleList([model_type() for _ in range(n_layers)])
 
         def apply_one(dims, x, weights, masks, *, layer_index=0, **kwargs):
             return apply_residual(

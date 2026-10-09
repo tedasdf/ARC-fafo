@@ -150,3 +150,24 @@ python -m pytest tests/correctness/layers/test_triton_lse.py -q
 Both canonical scans use Triton; direction rotations, projections, masking,
 and residual operations remain standard PyTorch wrapper logic. Optional imports
 are lazy so ordinary CPU/PyTorch runs do not require Triton.
+
+
+## Comparing tied-convolution implementations
+
+The existing `projected_shift.yaml` uses grouped PyTorch `conv2d`.
+`projected_shift_unfold.yaml` uses explicit `F.unfold` and weighted patch
+multiplication. `projected_shift_triton.yaml` uses a direct 3x3 depthwise Triton
+kernel and input/filter backward kernels. All retain the same two canonical
+learned 3x3 kernels, direction rotations, parameter/state-dict layout, masks,
+projections, normalization and residuals. No matrix fusion changes the model.
+
+```bash
+python src/run_training_timing.py --config src/config/models/projected_shift.yaml --config src/config/models/projected_shift_unfold.yaml --config src/config/models/projected_shift_triton.yaml --set training.device=cuda:0
+```
+
+These explicit configs do not change the launcher's five defaults. Verify the
+optional GPU kernel before comparing full-step timings, from `src`:
+
+```bash
+python -m pytest tests/correctness/layers/test_triton_shift.py -q
+```

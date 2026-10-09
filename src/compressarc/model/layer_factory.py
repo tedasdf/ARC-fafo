@@ -6,6 +6,7 @@ from ..layers.cummax.morphological import MorphologicalMax
 from ..layers.cummax.optimisation import MorphologicalMax as OptimisedMax
 from ..layers.shift.primitives import ShiftPrimitives
 from ..layers.shift.layer import TiedShiftLayer
+from ..layers.shift.morphological import UnfoldTiedDirectionalConv
 from ..layers.cummax.layer import LSELayer
 from ..layers.cummax.primitives import CummaxPrimitives
 from ..layers.direction_share.primitives import DirectionSharePrimitives
@@ -25,6 +26,16 @@ def create_triton_cummax(**kwargs):
         raise
     return LSELayer(model_type=TritonMorphologicalMax, **kwargs)
 
+
+def create_triton_shift(**kwargs):
+    try:
+        from ..layers.shift.triton_op import TritonTiedDirectionalConv
+    except ModuleNotFoundError as error:
+        if error.name == "triton":
+            raise RuntimeError("Triton shift requires Linux CUDA FP32 and Triton; install src/requirements.txt.") from error
+        raise
+    return TiedShiftLayer(model_type=TritonTiedDirectionalConv, **kwargs)
+
 class LayerFactory:
     """Construct configured layer implementations from a small registry.
 
@@ -34,7 +45,11 @@ class LayerFactory:
 
     def __init__(self):
         self._implementations = {
-            "shift": {"primitives": ShiftPrimitives, "tied_conv": TiedShiftLayer},
+            "shift": {
+                "primitives": ShiftPrimitives, "tied_conv": TiedShiftLayer,
+                "unfold": partial(TiedShiftLayer, model_type=UnfoldTiedDirectionalConv),
+                "triton": create_triton_shift,
+            },
             "cummax": {
                 "primitives": CummaxPrimitives,
                 "d4": partial(LSELayer, model_type=MorphologicalMax),

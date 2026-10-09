@@ -22,14 +22,8 @@ class TiedDirectionalConv(nn.Module):
             [0., 0., 0.]
         ]))
 
-    def forward(self, x):
-        """
-        x: [B, 2, 4, H, W]
-
-        x[:, 0] = cardinal directions
-        x[:, 1] = diagonal directions
-        """
-
+    def directional_kernels(self):
+        """Expand the two learned canonical kernels into their rotated D4 orbits."""
         # --------------------------------
         # Cardinal orbit
         # --------------------------------
@@ -92,13 +86,17 @@ class TiedDirectionalConv(nn.Module):
             diagonal
         ])                          # [2, 4, 3, 3]
 
+        return kernels.reshape(8, 1, 3, 3)
+
+    def forward(self, x):
+        """Depthwise conv2d on [B, 2, 4, H, W] with shared rotated weights."""
         B, _, _, H, W = x.shape
 
         # conv2d wants channels rather than [orbit, direction]
         x_flat = x.reshape(B, 8, H, W)
 
         # [2,4,3,3] -> [8,1,3,3]
-        kernels_flat = kernels.reshape(8, 1, 3, 3)
+        kernels_flat = self.directional_kernels()
 
         y = F.conv2d(
             x_flat,
@@ -114,3 +112,17 @@ class TiedDirectionalConv(nn.Module):
 
 
 
+
+
+class UnfoldTiedDirectionalConv(TiedDirectionalConv):
+    """Same tied convolution through explicit im2col and weighted patch reduction."""
+
+    def forward(self, x):
+        if x.ndim != 5 or x.shape[1:3] != (2, 4) or min(x.shape) < 1:
+            raise ValueError("Expected nonempty [B, 2, 4, H, W]")
+        batch, _, _, height, width = x.shape
+        patches = F.unfold(x.reshape(batch, 8, height, width), kernel_size=3, padding=1)
+        patches = patches.reshape(batch, 8, 9, height * width)
+        kernels = self.directional_kernels().reshape(8, 9)
+        output = torch.einsum("nckl,ck->ncl", patches, kernels)
+        return output.reshape(batch, 2, 4, height, width)

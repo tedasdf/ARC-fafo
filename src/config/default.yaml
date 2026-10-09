@@ -10,7 +10,7 @@ model:
   cummax_dim: 4
   shift_dim: 4
   nonlinear_dim: 16
-  # shift: primitives | tied_conv (projected residual)
+  # shift: primitives | tied_conv | unfold | triton (all replacements projected)
   shift_implementation: primitives
   # cummax: primitives | d4 (reference LSE) | optimised | triton (GPU axis + diagonal)
   cummax_implementation: primitives
