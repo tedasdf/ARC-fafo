@@ -1,6 +1,14 @@
+# Runtime versions used by the validated training and timing code (Python 3.10+).
 matplotlib==3.10.0
 numpy==2.2.2
 torch==2.5.1
 tqdm==4.66.6
 wandb==0.28.1
 omegaconf==2.3.0
+
+# Correctness tests.
+pytest==9.1.1
+
+# Triton GPU kernels/tests: matches torch 2.5.1 on Linux x86_64.
+# Not installed on native Windows; the five model YAMLs do not select Triton.
+triton==3.1.0; platform_system == "Linux" and platform_machine == "x86_64"
