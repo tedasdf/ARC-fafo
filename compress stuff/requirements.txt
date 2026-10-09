@@ -1,2 +1,0 @@
-# Shared dependencies are maintained in src.
--r ../src/requirements.txt

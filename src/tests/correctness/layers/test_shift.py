@@ -6,6 +6,10 @@ import torch
 from compressarc.layers.shift.primitives import diagonal_shift_, shift_
 from compressarc.layers.shift.morphological import TiedDirectionalConv
 
+
+# TODO: Ouput & GRadinets:
+# TODO Adapter logic
+# TODO Group weight correctness 
 @pytest.fixture(
         params=[(2, 3), (0, 0), (4, 5)], ids=["interior", "top_left", "bottom_right"])
 def pulse(request):

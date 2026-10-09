@@ -41,4 +41,4 @@ Use model.multitensor_constraints=strict (the default) or model.multitensor_cons
 modal secret create wandb-secret WANDB_API_KEY=<your-wandb-api-key>
 ~~~
 
-The Modal backend runs the resolved configuration remotely; local execution remains the default. compress stuff/modal_runner.py remains a separate legacy strict-vs-relaxed ablation.
+The Modal backend runs the resolved configuration remotely; local execution remains the default.

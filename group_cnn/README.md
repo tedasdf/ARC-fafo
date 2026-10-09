@@ -14,13 +14,9 @@ python -m pytest -q
 Use your existing CompressARC input, weights and masks in both calls:
 
 ```python
-import sys
-from pathlib import Path
 import torch
 
-# This setup assumes the current directory is group_cnn.
-sys.path.insert(0, str(Path("../compress stuff").resolve()))
-import layers
+from src.native_reference import reference as layers
 from src import CompressARCShift
 
 model = CompressARCShift(layers)
@@ -58,10 +54,8 @@ They must accept arbitrary tensor axes and retain shape. If they are trainable
 modules, register them in your own network/optimizer; the builder is a callable
 wrapper, not a parameter container.
 
-Compatibility means reproducing current reference behavior, including two
-existing quirks: the pre-normalized temporary is overwritten by the projection,
-and cardinal directions select even features in both channel halves. These
-behaviors are intentionally preserved for comparison.
+Compatibility means reproducing the retained src/compressarc implementation, including its normalization
+and cardinal feature selection behavior.
 
 Tests compare all components and input/projection gradients against the actual
 reference, using multiple examples/colors, rectangular grids, random values,

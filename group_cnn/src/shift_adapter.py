@@ -28,7 +28,7 @@ def _conv_shift_axis(x, dim, amount, pad_value=0):
     flat = lines.reshape(-1, 1, length)
     padded = F.pad(flat, (distance, distance), value=pad_value)
     shifted = F.conv1d(padded, kernel)
-    return shifted.reshape(lines.shape).movedim(-1, dim) # [E*C*W*F, 1, H] → [E, C, W, F, H] → [E, C, H, W, F]
+    return shifted.reshape(lines.shape).movedim(-1, dim) # [E*C*W*F, 1, H] â†’ [E, C, W, F, H] â†’ [E, C, H, W, F]
 
 
 def conv_shift_(x, dim, masks=None):
@@ -51,7 +51,10 @@ def build_shift_layer(reference_layers, cardinal_fn=conv_shift_,
     verify your own network inside the exact same surrounding operations.
     """
     directional = reference_layers.make_directional_layer(cardinal_fn, diagonal_fn)
-    residual = reference_layers.add_residual(directional)
+    def residual(dims, x, weights, masks, **kwargs):
+        return reference_layers.apply_residual(
+            x, weights, lambda projected: directional(dims, projected, masks), **kwargs
+        )
     filtered = reference_layers.only_do_for_certain_shapes(
         (1, 1, 1, 1, 1), (1, 0, 1, 1, 1)
     )(residual)
@@ -111,22 +114,11 @@ def tied_directional_shift(x, masks, model):
 
 if __name__ == "__main__":
 
-    import sys
-    from pathlib import Path    
-    import importlib.util
 
     generator = torch.Generator().manual_seed(42)
 
 
-    # Load the actual reference implementation, including its MultiTensor class.
-    reference_dir = Path(__file__).resolve().parents[2] / "compress stuff"
-    sys.path.insert(0, str(reference_dir))
-    try:
-        spec = importlib.util.spec_from_file_location("compressarc_reference_layers", reference_dir / "layers.py")
-        reference = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(reference)
-    finally:
-        sys.path.pop(0)
+    from src.native_reference import reference
 
     n_examples = 2 
     n_colors = 3
@@ -163,7 +155,7 @@ if __name__ == "__main__":
     expected = reference.shift(x, weights, masks, **flags)
     for dims in system:
         torch.testing.assert_close(actual[dims], expected[dims])
-    print("PASS: all output components match compress stuff/layers.py")
+    print("PASS: all output components match src/compressarc layers")
 
     # MultiTensor has no single .shape; each x[dims] is a tensor with a shape.
     print("\nComponent shapes (flags: E, C, D, H, W; features are always last):")

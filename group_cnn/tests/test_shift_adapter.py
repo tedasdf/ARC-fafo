@@ -1,21 +1,9 @@
-import importlib.util
-from pathlib import Path
-import sys
-
 import pytest
 import torch
 
 from src import CompressARCShift, conv_shift_, conv_diagonal_shift_
 
-# Load the actual reference implementation, including its MultiTensor class.
-reference_dir = Path(__file__).resolve().parents[2] / "compress stuff"
-sys.path.insert(0, str(reference_dir))
-try:
-    spec = importlib.util.spec_from_file_location("compressarc_reference_layers", reference_dir / "layers.py")
-    reference = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(reference)
-finally:
-    sys.path.pop(0)
+from src.native_reference import reference
 
 
 @pytest.mark.parametrize("shape,dim", [((3, 5), 0), ((3, 5), 1), ((2, 3, 4, 5), -2), ((2, 1), 1)])
