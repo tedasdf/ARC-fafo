@@ -20,13 +20,15 @@ def initialize_wandb(config, task, model, optimizer):
         import wandb
     except ImportError as error:
         raise RuntimeError("W&B is enabled but wandb is not installed; install the project requirements.") from error
+    configuration = config.get("experiment", {}).get("name")
     run = wandb.init(
         project=config.logging.wandb_project,
         entity=config.logging.wandb_entity,
-        name=f"{task.task_name}-{config.training.split}",
+        name=f"{task.task_name}-{config.training.split}" + (f"-{configuration}" if configuration else ""),
         mode=config.logging.wandb_mode,
         config={
             "task_name": task.task_name,
+            "configuration": configuration,
             "split": config.training.split,
             "n_train_examples": task.n_train,
             "n_test_examples": task.n_test,

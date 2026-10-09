@@ -89,7 +89,29 @@ class ARCCompressor:
             self.decode_weights,
         )
 
+    def _init_projected_direction_share(self):
+        # The pilot consumed baseline pair-weight initialization, then created
+        # separate 8-channel projections after heads and symmetry constraints.
+        width = self.config.get("direction_share_dim", 8)
+        self.direction_projection_weights = [
+            self.initializer.initialize_multiresidual(width, width)
+            for _ in range(self.n_layers)
+        ]
+        for weights in self.direction_projection_weights:
+            self.initializer.symmetrize_xy(weights)
+        unused = {
+            id(tensor) for weights in self.direction_share_weights
+            for dims in self.multitensor_system if dims[2]
+            for row in weights[dims] for pair in row for tensor in pair
+        }
+        self.weights_list[:] = [weight for weight in self.weights_list if id(weight) not in unused]
+        self.direction_share_weights = self.direction_projection_weights
+        for index, weights in enumerate(self.direction_projection_weights):
+            self.layer_weights[index]["direction_share"] = weights
+
     def _init_layers(self):
+        if self.config.direction_share_implementation == "projected_d4":
+            self._init_projected_direction_share()
         factory = LayerFactory()
         self.latent_decoder = LatentDecoder(multify)
         self.output_heads = OutputHeads()

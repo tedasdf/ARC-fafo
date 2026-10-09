@@ -10,6 +10,7 @@ from ..layers.cummax.layer import LSELayer
 from ..layers.cummax.primitives import CummaxPrimitives
 from ..layers.direction_share.primitives import DirectionSharePrimitives
 from ..layers.direction_share.morphological import D4DirectionShareLayer
+from ..layers.direction_share.projected import ProjectedD4DirectionShareLayer
 
 class LayerFactory:
     """Construct configured layer implementations from a small registry.
@@ -26,7 +27,10 @@ class LayerFactory:
                 "d4": partial(LSELayer, model_type=MorphologicalMax),
                 "optimised": partial(LSELayer, model_type=OptimisedMax),
             },
-            "direction_share": {"primitives": DirectionSharePrimitives, "d4": D4DirectionShareLayer},
+            "direction_share": {
+                "primitives": DirectionSharePrimitives, "d4": D4DirectionShareLayer,
+                "projected_d4": ProjectedD4DirectionShareLayer,
+            },
         }
 
     def register(self, layer_name, implementation_name, implementation):

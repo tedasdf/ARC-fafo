@@ -143,10 +143,13 @@ def main(argv=None):
         if timing is not None:
             try:
                 if run is not None:
-                    variant = config.model.cummax_implementation
-                    run.name = f"{task.task_name}-{variant}-{args.benchmark_pass}"
+                    configuration = config.get("experiment", {}).get(
+                        "name", Path(args.config).stem if args.config else "default",
+                    )
+                    run.name = f"{task.task_name}-{configuration}-{args.benchmark_pass}"
                     run.config.update({
                         "mode": "benchmark", "benchmark_pass": args.benchmark_pass,
+                        "configuration": configuration, "config_source": str(args.config) if args.config else None,
                         "warmup_iterations": args.warmup_iterations,
                         "measured_iterations": args.measured_iterations,
                         "actual_training_iterations": args.warmup_iterations + args.measured_iterations,
@@ -157,7 +160,8 @@ def main(argv=None):
                 if run is not None:
                     run.summary.update(result)
                 print(json.dumps({"task": task.task_name,
-                                  "variant": config.model.cummax_implementation,
+                                  "configuration": config.get("experiment", {}).get(
+                                      "name", Path(args.config).stem if args.config else "default"),
                                   "pass": args.benchmark_pass, "metrics": result}, indent=2))
                 return result
             finally:

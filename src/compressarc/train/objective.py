@@ -17,11 +17,16 @@ def mask_select_logprobs(mask, length):
     return torch.logsumexp(logprobs, dim=0), logprobs
 
 
-def take_step(task, model, optimizer, train_step, config=None, return_outputs=False):
+def take_step(task, model, optimizer, train_step, config=None, return_outputs=False,
+              phase_callback=None):
     """Compute the ARC objective, update model weights, and return scalar metrics."""
     config = config if config is not None else load_config().training
     optimizer.zero_grad()
+    if phase_callback is not None:
+        phase_callback("forward")
     logits, x_mask, y_mask, kl_amounts, kl_names = model.forward()
+    if phase_callback is not None:
+        phase_callback("loss")
     logits = torch.cat([torch.zeros_like(logits[:, :1, :, :]), logits], dim=1)
 
     kl_components = {
@@ -112,9 +117,15 @@ def take_step(task, model, optimizer, train_step, config=None, return_outputs=Fa
             reconstruction_error = reconstruction_error - marginal_logprob
 
     loss = config.kl_weight * total_kl + config.reconstruction_weight * reconstruction_error
+    if phase_callback is not None:
+        phase_callback("backward")
     loss.backward()
+    if phase_callback is not None:
+        phase_callback("optimizer")
     optimizer.step()
 
+    if phase_callback is not None:
+        phase_callback("metrics")
     metrics = {
         "kl": float(total_kl.detach().cpu()),
         "kl_components": kl_components,
@@ -125,4 +136,6 @@ def take_step(task, model, optimizer, train_step, config=None, return_outputs=Fa
         metrics["outputs"] = tuple(
             value.detach().cpu() for value in (logits, x_mask, y_mask)
         )
+    if phase_callback is not None:
+        phase_callback("end")
     return metrics

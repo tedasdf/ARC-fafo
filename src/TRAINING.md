@@ -51,12 +51,11 @@ Run the thin launcher from the repository root on your single GPU:
 python src/run_training_timing.py --set training.device=cuda:0
 ```
 
-It calls `train.main` for the five real tasks listed in the launcher and each
-cummax variant (`primitives`, `d4`, `optimised`). Pass the same exploratory YAML
+It calls `train.main` for the five real tasks listed in the launcher and each of the five model YAMLs in `src/config/models`. Pass the same exploratory YAML
 with `--config`; standard `--set` overrides also work. Model initialization,
 actual task preprocessing, loss, and Adam update are the existing trainer code.
 
-Every task/variant gets two fresh, equally seeded passes and two W&B runs:
+Every task/configuration gets two fresh, equally seeded passes and two W&B runs:
 
 - **clean**: wall-timed setup, first step, 10 warmup updates (including the first),
   then a synchronized block of 30 complete updates. Only this pass reports
@@ -66,7 +65,7 @@ Every task/variant gets two fresh, equally seeded passes and two W&B runs:
   clearing remains inside complete updates without its own metric. Profiling
   results do not need to sum to clean block wall time.
 
-Thus the default is 40 updates per pass, 80 per task/variant, 30 W&B runs total.
+Thus the default is 40 updates per pass, 80 per task/configuration, 50 W&B runs total.
 W&B initialization and summary writes happen outside timed regions. Benchmark
 mode skips predictions/images, PCA, progress updates, and checkpoints; scalar
 transfers already inside `take_step` remain included. The loss-phase KL-component
@@ -77,7 +76,7 @@ W&B run summaries, and task/model settings remain in the existing W&B config.
 For one task/variant or a different measured block:
 
 ```bash
-python src/run_training_timing.py --task 694f12f3 --variant optimised --measured-iterations 50
+python src/run_training_timing.py --task 694f12f3 --config src/config/models/all_projected.yaml --measured-iterations 50
 ```
 
 Use `--clean-only` to skip profiling. CPU smoke runs use host-clock operation
@@ -89,3 +88,34 @@ The benchmark flag can also be invoked directly for a single pass:
 ```bash
 python src/train.py --mode benchmark --task 694f12f3 --benchmark-pass clean --set logging.wandb=true
 ```
+
+
+## Model YAMLs for timing and exploratory runs
+
+| YAML in src/config/models | Shift | Direction-share | Cummax |
+|---|---|---|---|
+| original.yaml | primitives | primitives | primitives |
+| projected_shift.yaml | tied_conv | primitives | primitives |
+| projected_direction_share.yaml | primitives | projected_d4 | primitives |
+| projected_cummax_lse.yaml | primitives | primitives | optimised LSE |
+| all_projected.yaml | tied_conv | projected_d4 | optimised LSE |
+
+Each YAML inherits other model and training settings from `config/default.yaml`.
+The projected D4 implementation migrates the pilot's
+`x + W2 D4(W1 normalize(x))`, using 8-channel projections, XY symmetrization,
+and one 10-orbit D4 mixer per depth. Legacy directional pair weights consume
+their original initialization sequence but are removed from the optimizer.
+The existing direct `d4` implementation remains available separately.
+
+The launcher no longer has a variant flag or silently overrides model choices.
+Pass `--config` repeatedly to choose several YAMLs; omit it to run all five.
+Explicit `--set` overrides still apply. W&B records each configuration name,
+source YAML, and the actual resolved model settings. Use the same YAML for pilots:
+
+```bash
+python src/train.py --config src/config/models/all_projected.yaml --task 694f12f3 --set logging.wandb=true
+```
+
+These preserve the migrated layer architecture; pilot training settings such as
+seed 42, training length, and early stopping are not implicitly imported. Set
+those explicitly if needed. The LSE YAML uses the optimized PyTorch LSE backend.
