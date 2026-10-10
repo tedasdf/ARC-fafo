@@ -15,6 +15,9 @@ wandb==0.28.1
 # Direction-share, LSE, shift, and training correctness suites.
 pytest==9.1.1
 
+# Imported by Triton 3.1 at runtime, including in fresh virtual environments.
+setuptools==75.8.0
+
 # Triton matches torch 2.5.1 on Linux x86_64.
 # Required by final_pilot_8.yaml and other configs selecting a Triton backend.
 # GPU execution requires CUDA; native Windows skips this dependency.
