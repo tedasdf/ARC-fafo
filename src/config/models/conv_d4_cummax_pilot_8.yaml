@@ -1,7 +1,8 @@
+# Projected conv2d shift + projected D4; retain original hard cummax.
 # Full training on the original eight pilot tasks: 1500 updates, seed 0.
 # Fixed budget: the current trainer does not implement legacy early stopping.
 experiment:
-  name: all_projected_triton_lse_pilot8_seed0
+  name: conv_d4_cummax_pilot8_seed0
   task_ids:
     - "0dfd9992"
     - "22eb0ac0"
@@ -15,7 +16,7 @@ model:
   shift_implementation: tied_conv
   direction_share_implementation: d4
   direction_share_dim: 8
-  cummax_implementation: triton
+  cummax_implementation: primitives
   multitensor_constraints: strict
   lse_tau: 0.1
   layer_timing: false
@@ -28,5 +29,5 @@ logging:
   wandb: true
   wandb_project: compressarc
   wandb_entity: arc_agi
-  wandb_tags: [pilot8, final, full-training, seed0, triton-lse]
+  wandb_tags: [pilot8, full-training, seed0, hard-cummax]
   latent_pca: false

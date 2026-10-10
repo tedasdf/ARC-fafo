@@ -183,20 +183,23 @@ def main(argv=None):
                     (train_step + 1) % logging_config.prediction_every == 0
                     or train_step == training_config.iterations - 1
                 )
+                # Correctness is evaluated every update; images keep their own cadence.
+                accuracy_step = run is not None and task.solution_hash is not None
+                evaluation_step = prediction_step or accuracy_step
                 last_metrics = take_step(
                     task, model, optimizer, train_step, training_config,
-                    return_outputs=prediction_step,
+                    return_outputs=evaluation_step,
                 )
                 progress.set_postfix(loss=f"{last_metrics['loss']:.3f}")
-                if prediction_step:
+                if evaluation_step:
                     tracker.update(train_step, last_metrics["outputs"])
 
                 if run is not None and (
-                    train_step % logging_config.wandb_log_every == 0 or prediction_step
+                    train_step % logging_config.wandb_log_every == 0 or evaluation_step
                 ):
                     log_training_step(
                         run, task, tracker, train_step, last_metrics,
-                        include_prediction=prediction_step,
+                        include_prediction=prediction_step, include_accuracy=accuracy_step,
                     )
 
             if args.save_checkpoints:
