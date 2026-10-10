@@ -29,3 +29,4 @@ logging:
   wandb_project: compressarc
   wandb_entity: arc_agi
   wandb_tags: [pilot8, final, full-training]
+  latent_pca: false
