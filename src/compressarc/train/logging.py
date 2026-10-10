@@ -131,6 +131,11 @@ def log_training_step(run, task, tracker, train_step, metrics, include_predictio
 
     payload = training_metrics_payload(train_step, metrics)
     if include_prediction:
+        if task.solution_hash is not None:
+            first_correct = hash(tracker.solution_most_frequent) == task.solution_hash
+            second_correct = hash(tracker.solution_second_most_frequent) == task.solution_hash
+            payload["predictions/top_1_correct"] = int(first_correct)
+            payload["predictions/pass_2_correct"] = int(first_correct or second_correct)
         figure = plot_predictions(
             task, tracker.solution_most_frequent, tracker.solution_second_most_frequent
         )
