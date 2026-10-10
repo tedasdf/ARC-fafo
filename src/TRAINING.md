@@ -171,3 +171,24 @@ optional GPU kernel before comparing full-step timings, from `src`:
 ```bash
 python -m pytest tests/correctness/layers/test_triton_shift.py -q
 ```
+
+## Full training on the original eight pilot tasks
+
+The final_pilot_8.yaml config selects conv2d projected shift, projected D4,
+and Triton cardinal/diagonal LSE. It declares the original eight task IDs,
+1500 updates per task, seed 42, and strict constraints. Other model and
+optimizer defaults stay shared. Full training uses the existing trainer and
+W&B training metrics/predictions rather than clean/profile benchmark passes.
+
+From the repository root on the L4:
+
+```bash
+python src/run_training_timing.py --mode train --config src/config/models/final_pilot_8.yaml
+```
+
+Add --dry-run to inspect all eight planned calls without training. The launcher
+reads experiment.task_ids when --task is omitted; explicit --task selections
+still take precedence. Benchmark mode remains the launcher default. The pilot
+run is fixed at 1500 updates per task; legacy early stopping is not enabled.
+Each task gets a fresh model/optimizer and seed 42, trained sequentially on
+cuda:0, with a separate W&B run in arc_agi/compressarc.
