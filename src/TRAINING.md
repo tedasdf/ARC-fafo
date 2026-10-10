@@ -144,7 +144,7 @@ and verify the GPU parity tests before comparing performance:
 
 ```bash
 cd src
-python -m pytest tests/correctness/layers/test_triton_lse.py -q
+python -m pytest tests/correctness/layers/lse/test_triton_lse.py -q
 ```
 
 Both canonical scans use Triton; direction rotations, projections, masking,
@@ -169,7 +169,7 @@ These explicit configs do not change the launcher's five defaults. Verify the
 optional GPU kernel before comparing full-step timings, from `src`:
 
 ```bash
-python -m pytest tests/correctness/layers/test_triton_shift.py -q
+python -m pytest tests/correctness/layers/shift/test_shift.py -q
 ```
 
 ## Full training on the original eight pilot tasks

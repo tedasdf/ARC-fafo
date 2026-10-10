@@ -1,7 +1,7 @@
 
 
 
-Every layer should have the below 5 cases:
+Layer tests cover these five main areas, plus optional diagnostics:
 
 | Pillar / Check | Objective | What It Validates | Example Test / Method |
 | :--- | :--- | :--- | :--- |
@@ -13,11 +13,37 @@ Every layer should have the below 5 cases:
 | **6. Extensions & Diagnostics** | Monitor metadata, timing, and debugging flags | Ensures optional profiling/timing flags record accurately without altering core functional outputs. | Monkeypatching timers or checking that timing dictionaries populate correctly when requested. |
 
 
-| Testing Pillar / Check | Morphological / LSE (`test_lse.py`) | D4 Direction Share (`test_d4.py`) | Triton GPU (`test_triton.py`) | Shift Primitives (`test_shift_primitives.py`) | Shift Integration / Glue (`test_shift_glue.py`) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **1. Special-Case Correctness** | ✅ **Present** (Check with `reference_direction`) | ❌ **Not Applicable** | ✅ **Present** (Tested via reference parity) | ✅ **Present** (Tested via delta pulse shifts) | ❌ **Not Applicable** (Glue logic) |
-| **2. Equivariance** | ✅ **Present** | ✅ **Present** (`test_d4_direction_share_equivariance`) | ❌ **Not Applicable** | ❌ **Not Applicable** | ❌ **Not Applicable** |
-| **3. Group Weight Correctness** | ❌ **Not Applicable** | ✅ **Present** (`test_d4_direction_share_orbit_weights`) | ❌ **Not Applicable** | ✅ **Present** (Tied conv orbit alignment) | ❌ **Not Applicable** |
-| **4. Outputs & Gradients** | ✅ **Present** (Regression output/grad check) | ✅ **Present** (`test_d4_direction_share_parameter_gradients`) | ✅ **Present** (Comprehensive input/kernel grad & layout checks) | ❌ **Not Present** (Pure forward pulse check) | ❌ **Not Present** (Missing backward loss and input grad verification) |
-| **5. Adapter Logic & Integration** | ✅ **Present** | ✅ **Present** (`test_d4_adapter_axes_residual_and_passthrough`) | ❌ **Not Applicable** | ❌ **Not Applicable** | ✅ **Present** (Multi-tensor active shapes, masks, and residuals) |
-| **6. Extensions & Diagnostics** | ✅ **Present** (Timing flag tests) | ❌ **Not Present** | ❌ **Not Present** | ❌ **Not Present** | ❌ **Not Present** |
+The layer suites are grouped by operation:
+
+```text
+correctness/layers/
+  direction_share/
+    test_direction_share.py
+  lse/
+    test_lse.py
+    test_triton_lse.py
+  shift/
+    test_shift.py
+```
+
+Core checks and projected-layer integration share one suite for direction-share
+and shift. LSE keeps its optional CUDA suite separate. Shift skips only its
+Triton cases when Triton or CUDA is unavailable.
+
+Run from the repository root:
+
+```bash
+python -m pytest src/tests/correctness/layers -q
+python -m pytest src/tests/correctness/layers/direction_share -q
+python -m pytest src/tests/correctness/layers/lse -q
+python -m pytest src/tests/correctness/layers/shift -q
+```
+
+| Check | LSE | Direction share | Shift |
+| :--- | :--- | :--- | :--- |
+| Correctness | Coordinate-based LSE reference | Primitive special-case equivalence | Primitive pulse shifts and tied-convolution parity |
+| Equivariance | Quarter-turn checks | D4 rotations and reflections | Dedicated check still needed |
+| Group weight correctness | Shared kernels, gradient accumulation and optimizer checks | Direction-pair orbit mapping | Pulse direction alignment; dedicated tying/accumulation check still needed |
+| Outputs and gradients | Preoptimized/optimized and CUDA reference parity | Core gradients, primitive parity and projected equation | Conv2d/unfold/Triton parity; primitive layer backward reference check still needed |
+| Adapter logic and integration | Masks, projections and residuals | Axis layouts, passthrough, projections and optimizer registration | Masks, normalization, biases, projections, residuals and passthrough |
+| Extensions and diagnostics | Timing flags and CUDA checks | No dedicated diagnostic checks | Triton input validation |
