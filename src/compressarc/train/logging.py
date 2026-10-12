@@ -9,7 +9,7 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from compressarc.model.multitensor_systems import multify
-from compressarc.analysis.visualization import plot_pca_component, plot_predictions, plot_problem
+from compressarc.analysis.visualization import color_list, plot_pca_component, plot_predictions, plot_problem
 from .metrics import training_metrics_payload
 
 
@@ -110,6 +110,43 @@ def log_latent_pca(run, model, logging_config):
 
 
 
+def grid_image(grid):
+    """RGB pixels in original ARC colors, without color-index remapping."""
+    return color_list[np.asarray(grid, dtype=np.int64)].astype(np.uint8)
+
+
+def reference_outputs_table(task):
+    """Known training outputs and available full test references, logged once."""
+    import wandb
+    table = wandb.Table(columns=["split", "example", "height", "width", "output", "grid"])
+    train_grids = [case["output"] for case in task.unprocessed_problem["train"]]
+    for split, grids in (("train", train_grids), ("test", task.reference_solutions or ())):
+        for index, grid in enumerate(grids):
+            raw = np.asarray(grid, dtype=np.int64)
+            table.add_data(split, index + 1, raw.shape[0], raw.shape[1],
+                           wandb.Image(grid_image(raw)), raw.tolist())
+    return table
+
+
+def training_predictions_table(task, outputs, tracker):
+    """Decode the current forward sample for each known training output shape."""
+    import wandb
+    logits, x_mask, y_mask = (value.detach().cpu() for value in outputs)
+    table = wandb.Table(columns=["example", "expected_y", "predicted_y", "exact_match",
+                                 "expected_grid", "predicted_grid"])
+    colors = np.asarray(task.colors)
+    for index, case in enumerate(task.unprocessed_problem["train"]):
+        expected = np.asarray(case["output"], dtype=np.int64)
+        height, width = expected.shape
+        x0, x1 = tracker.best_slice(x_mask[index, :, 1], height)
+        y0, y1 = tracker.best_slice(y_mask[index, :, 1], width)
+        indices = torch.argmax(logits[index, :, x0:x1, y0:y1, 1], dim=0).numpy()
+        predicted = colors[indices]
+        table.add_data(index + 1, wandb.Image(grid_image(expected)),
+                       wandb.Image(grid_image(predicted)), bool(np.array_equal(expected, predicted)),
+                       expected.tolist(), predicted.tolist())
+    return table
+
 def log_problem(run, task):
     """Log the ARC puzzle grid montage once at the beginning of a run."""
     if run is None:
@@ -118,7 +155,8 @@ def log_problem(run, task):
     import wandb
 
     figure = plot_problem(task, fname=False)
-    run.log({"puzzle/problem": wandb.Image(figure)})
+    run.log({"puzzle/problem": wandb.Image(figure),
+             "puzzle/reference_outputs": reference_outputs_table(task)})
     plt.close(figure)
 
 
@@ -141,6 +179,7 @@ def log_training_step(run, task, tracker, train_step, metrics, include_predictio
             task, tracker.solution_most_frequent, tracker.solution_second_most_frequent
         )
         payload["predictions/solutions"] = wandb.Image(figure)
+        payload["train/predictions"] = training_predictions_table(task, metrics["outputs"], tracker)
         plt.close(figure)
     run.log(payload)
 

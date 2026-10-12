@@ -28,6 +28,10 @@ def main(argv=None):
     parser.add_argument("--measured-iterations", type=int, default=30)
     parser.add_argument("--set", dest="overrides", action="append", default=[])
     parser.add_argument("--clean-only", action="store_true", help="Skip the separate operation-profile pass")
+    parser.add_argument("--shard-count", type=int, default=1,
+                        help="Split task/config/pass jobs across this many independent workers")
+    parser.add_argument("--shard-index", type=int, default=0,
+                        help="Zero-based worker index; each job is assigned to exactly one worker")
     parser.add_argument("--save-checkpoints", action="store_true",
                         help="Save final .pt weights and upload them to W&B in train mode")
     parser.add_argument("--output-dir", type=Path,
@@ -35,6 +39,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.save_checkpoints and args.mode != "train":
         parser.error("--save-checkpoints requires --mode train")
+    if args.shard_count < 1 or not 0 <= args.shard_index < args.shard_count:
+        parser.error("Require shard-count >= 1 and 0 <= shard-index < shard-count")
     configs = args.config or DEFAULT_CONFIGS
     config_tasks = {}
     for config_path in configs:
@@ -52,11 +58,16 @@ def main(argv=None):
     passes = ["train"] if args.mode == "train" else (
         ["clean"] if args.clean_only else ["clean", "operations"]
     )
+    job_index = 0
     for task in tasks:
         for config_path in configs:
             if task not in config_tasks[config_path]:
                 continue
             for pass_name in passes:
+                assigned_index = job_index
+                job_index += 1
+                if assigned_index % args.shard_count != args.shard_index:
+                    continue
                 print(f"{task} / {config_path.stem} / {pass_name}", flush=True)
                 command = ["--mode", args.mode, "--task", task,
                            "--set", "logging.wandb=true"]
@@ -67,8 +78,12 @@ def main(argv=None):
                 command.extend(["--config", str(config_path)])
                 if args.save_checkpoints:
                     command.append("--save-checkpoints")
-                if args.output_dir is not None:
-                    command.extend(["--output-dir", str(args.output_dir)])
+                output_dir = args.output_dir
+                if args.save_checkpoints and (len(configs) > 1 or args.shard_count > 1):
+                    base = output_dir or Path(__file__).resolve().parents[1] / "outputs/training"
+                    output_dir = base / config_path.stem
+                if output_dir is not None:
+                    command.extend(["--output-dir", str(output_dir)])
                 for override in args.overrides:
                     command.extend(["--set", override])
                 if args.dry_run:

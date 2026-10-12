@@ -192,3 +192,12 @@ still take precedence. Benchmark mode remains the launcher default. The pilot
 run is fixed at 1500 updates per task; legacy early stopping is not enabled.
 Each task gets a fresh model/optimizer and seed 42, trained sequentially on
 cuda:0, with a separate W&B run in arc_agi/compressarc.
+
+## M3 Slurm task parallelism
+
+See [the Slurm guide](slurm/README.md) to train independent task models with the two corrected pilot variants using a 16-element GPU job array.
+## Reference answers and training predictions in W&B
+
+At run start, `puzzle/reference_outputs` records all training reference outputs and any available test reference answers, with images, original color-valued grids and dimensions. Full test references are preserved even when the model's padded canvas is smaller; this is diagnostic logging only.
+
+At `logging.prediction_every` (default every 10 updates) and the final update, `train/predictions` records each training example's expected output, current predicted output, exact-match flag and both raw grids. Predictions use output-mode logits and mask-selected crops of the known training output shape. These are current forward samples, rather than the tracked test guesses. `predictions/solutions` remains the two tracked test guesses, and top-1/pass@2 are still logged each iteration.

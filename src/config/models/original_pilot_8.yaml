@@ -32,4 +32,4 @@ logging:
   wandb_tags: [pilot8, full-training, seed0, original]
   latent_pca: false
   wandb_log_every: 1
-  prediction_every: 50
+  prediction_every: 10

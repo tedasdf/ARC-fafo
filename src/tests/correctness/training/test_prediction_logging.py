@@ -28,7 +28,8 @@ def test_prediction_correctness_history(monkeypatch, correct_guess, expected, in
     monkeypatch.setattr(training_logging, "plot_predictions", lambda *args: figures.append(args) or object())
     import matplotlib.pyplot as plt
     monkeypatch.setattr(plt, "close", lambda figure: None)
-    metrics = {"loss": 3.0, "reconstruction_error": 2.0, "kl": 1.0, "kl_components": {}}
+    monkeypatch.setattr(training_logging, "training_predictions_table", lambda *a: "training-table")
+    metrics = {"loss": 3.0, "reconstruction_error": 2.0, "kl": 1.0, "kl_components": {}, "outputs": ()}
 
     # Successive prediction evaluations remain separate records on train_step.
     for step in (49, 99):
@@ -47,6 +48,7 @@ def test_prediction_correctness_history(monkeypatch, correct_guess, expected, in
             assert "predictions/top_1_correct" not in record
             assert "predictions/pass_2_correct" not in record
         assert ("predictions/solutions" in record) == include_prediction
+        assert ("train/predictions" in record) == include_prediction
     assert len(figures) == (2 if include_prediction else 0)
 
 def test_trainer_evaluates_correctness_every_iteration_independently_of_images(monkeypatch):
@@ -96,6 +98,7 @@ def test_trainer_evaluates_correctness_every_iteration_independently_of_images(m
     monkeypatch.setattr(training_logging, "plot_predictions", lambda *a: object())
     import matplotlib.pyplot as plt
     monkeypatch.setattr(plt, "close", lambda figure: None)
+    monkeypatch.setattr(training_logging, "training_predictions_table", lambda *a: "training-table")
     original_device = torch.get_default_device()
     try:
         train.main(["--task", "accuracy_cadence"])

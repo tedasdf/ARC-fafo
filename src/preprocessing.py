@@ -27,6 +27,8 @@ class Task:
         self._compute_mask()
         self._create_problem_tensor(problem)
 
+        # Preserve full reference grids for diagnostic logging (the padded tensor can crop them).
+        self.reference_solutions = None
         self.solution = self._create_solution_tensor(solution) if solution else None
         if solution is None:
             self.solution_hash = None
@@ -144,6 +146,7 @@ class Task:
             min_x, min_y = min(grid_tensor.shape[1], self.n_x), min(grid_tensor.shape[2], self.n_y)
             solution_tensor[example_num, :, :min_x, :min_y] = grid_tensor[:, :min_x, :min_y]
 
+        self.reference_solutions = solution_tuple
         self.solution_hash = hash(solution_tuple)
         return torch.from_numpy(np.argmax(solution_tensor, axis=1)).to(torch.get_default_device())
 

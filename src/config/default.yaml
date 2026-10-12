@@ -39,7 +39,7 @@ logging:
   wandb_entity: null
   wandb_mode: online
   wandb_log_every: 1
-  prediction_every: 50
+  prediction_every: 10
   wandb_tags: []
   latent_pca: false
   pca_samples: 100
