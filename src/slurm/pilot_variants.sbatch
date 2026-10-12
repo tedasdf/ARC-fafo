@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash -l
 #SBATCH --job-name=arc-pilot-variants
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
@@ -16,7 +16,9 @@ if [[ ! -f src/run_training_timing.py ]]; then
     printf 'Submit from the ARC-fafo repository root.\n' >&2
     exit 1
 fi
-PYTHON_BIN="${ARC_PYTHON:-python}"
+module load miniforge3
+mamba activate SymARC
+PYTHON_BIN="$(command -v python)"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 export PYTHONUNBUFFERED=1

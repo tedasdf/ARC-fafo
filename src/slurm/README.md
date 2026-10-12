@@ -11,17 +11,18 @@ Both use 1500 updates, strict multitensors, per-iteration top-1/pass@2, images e
 
 ## Prepare and submit
 
-From the repository root on M3, activate your working Python 3.11 environment (for example `conda activate SymARC`), install dependencies once and log into W&B:
+From the repository root on M3, load Miniforge and activate your existing `SymARC` environment, then install dependencies once and log into W&B:
 
 ```bash
+module load miniforge3
+mamba activate SymARC
 python --version
 python -m pip install -r src/requirements.txt
 wandb login
-export ARC_PYTHON="$(command -v python)"
 sbatch src/slurm/pilot_variants.sbatch
 ```
 
-The script requests `--partition=gpu --gres=gpu:1`, four CPUs, 16 GB host RAM and four hours per task. Supply your usual account/QoS flags if required, for example `sbatch --account=YOUR_PROJECT ...`. These resources are defaults to adjust for your allocation; no remote submission is performed by the local changes.
+The script uses a login Bash shell, runs `module load miniforge3` and `mamba activate SymARC` in each job, and uses that environment's Python. It requests `--partition=gpu --gres=gpu:1`, four CPUs, 16 GB host RAM and four hours per task. Supply your usual account/QoS flags if required, for example `sbatch --account=YOUR_PROJECT ...`. These resources are defaults to adjust for your allocation; no remote submission is performed by the local changes.
 
 The default `--array=0-15%2` runs at most two GPU jobs concurrently. To request up to four concurrent jobs:
 
