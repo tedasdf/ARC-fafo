@@ -150,7 +150,7 @@ def make_directional_layer(fn, diagonal_fn):
                         cardinal_direction_ind = int(direction_ind//2)
                         if dims[3+cardinal_direction_ind]>0:
                             x_slice = torch.select(x, direction_dim, 4*direction_split+direction_ind)
-                            x_slice = x_slice[...,::2]
+                            x_slice = x_slice[...,channel_split::2]
                             masks_flipped = torch.select(masks, direction_dim, 0)
                             if direction_split + channel_split == 1:
                                 # below: decrement index to account for slicing, increment index to go from direction to x

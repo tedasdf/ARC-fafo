@@ -44,7 +44,7 @@ def channel_layer(target_capacity, posterior):
 
     normalized_mean = mean - mean.mean(dim=reduction_axes)
     normalized_mean = normalized_mean / torch.sqrt(
-        (normalized_mean**2).mean(dim=reduction_axes) + 1e-8
+        (normalized_mean**2 + 1e-8).mean(dim=reduction_axes)
     )
 
     z = signal_std * normalized_mean + noise_std * torch.randn_like(normalized_mean)

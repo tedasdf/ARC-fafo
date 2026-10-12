@@ -54,8 +54,8 @@ def reference_directions(x, masks, has_colors):
     for direction, (dr, dc) in enumerate(deltas):
         for half in range(2):
             row_delta, col_delta = (dr, dc) if half == 0 else (-dr, -dc)
-            # Cardinal slots select even channels; diagonal slots select each half.
-            source_half = 0 if direction % 2 == 0 else half
+            # Both orbit types select even/odd input features by output half.
+            source_half = half
             source = masked[..., direction, :, :, source_half::2]
             for row, col in product(range(x.shape[-3]), range(x.shape[-2])):
                 target_row, target_col = row + row_delta, col + col_delta

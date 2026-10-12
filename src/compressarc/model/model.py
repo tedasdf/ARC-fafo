@@ -152,7 +152,7 @@ class ARCCompressor:
             x = softmax(
                 x,
                 weights["softmax"],
-                pre_norm=True,
+                pre_norm=False,
                 post_norm=False,
                 use_bias=False,
             )
@@ -184,7 +184,7 @@ class ARCCompressor:
             x = nonlinear(
                 x,
                 weights["nonlinear"],
-                pre_norm=True,
+                pre_norm=False,
                 post_norm=False,
                 use_bias=False,
             )

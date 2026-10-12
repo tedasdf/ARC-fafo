@@ -11,7 +11,7 @@ def tied_directional_shift(x, masks, model):
 
     Model cardinal order: up, left, down, right.
     Model diagonal order: down-right, up-right, up-left, down-left.
-    This reproduces the original wrapper's even-feature cardinal selection.
+    Both cardinal and diagonal directions select even/odd features by output half.
     """
     if x.ndim not in (5, 6) or x.shape[-4] != 8 or x.shape[-1] % 2:
         raise ValueError("Expected [E, (C), 8, H, W, even_features]")
@@ -28,8 +28,8 @@ def tied_directional_shift(x, masks, model):
     for half, mapping in enumerate(movement_indices):
         by_movement = [None] * 8
         for direction, movement in enumerate(mapping):
-            # Cardinal directions use even features in BOTH output halves.
-            feature_start = 0 if direction % 2 == 0 else half
+            # Match main: first half reads even features, reverse half reads odd features.
+            feature_start = half
             grid = masked[..., direction, :, :, feature_start::2]
             by_movement[movement] = grid.movedim(-1, -3)
         # [E, (C), F/2, 8, H, W] -> [E*(C)*F/2, 2, 4, H, W]
