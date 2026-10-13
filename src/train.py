@@ -228,6 +228,7 @@ def main(argv=None):
                     log_training_step(
                         run, task, tracker, train_step, last_metrics,
                         include_prediction=prediction_step, include_accuracy=accuracy_step,
+                        include_diagnostics=diagnostic_step and ((train_step + 1) % 50 == 0 or train_step == training_config.iterations - 1),
                     )
 
             if args.save_checkpoints:
@@ -256,6 +257,9 @@ def main(argv=None):
             if diagnostic_file is not None:
                 for handle in (diagnostic_file, diagnostic_grids, diagnostic_predictions):
                     handle.close()
+                with (diagnostic_path / "final_candidates.jsonl").open("w", encoding="utf-8") as final_file:
+                    for entry in tracker.diagnostics.candidate_ranking(tracker):
+                        final_file.write(json.dumps(entry, allow_nan=False) + "\n")
                 log_ranking_trace(run, diagnostic_path)
 
             if run is not None:

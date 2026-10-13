@@ -35,10 +35,13 @@ A pattern may receive contributions from both raw and EMA. `last_source` and `la
 
 W&B history logs source uncertainties, separate penalties, contributions, accumulated scores, intermediate selected IDs/scores, final selected IDs/scores and score gap every iteration. `ranking/candidates` and `ranking/selected` tables batch all events since the previous image log, preserving every step.
 
-## Every 10 iterations and the final iteration
+## Every 50 iterations and the final iteration
 
 - `ranking/raw_vs_ema`: current raw grids on the left and EMA grids on the right.
-- `predictions/solutions`: the selected top two test guesses.
+- `ranking/top_two`: the selected top two test guesses.
+- `ranking/highest_scoring`: the 20 highest-scoring candidates, including appearance counts and first/last steps.
+Training examples keep their separate cadence of every 10 iterations and the final iteration:
+
 - `train/predictions`: provided training examples' expected outputs and current predicted outputs, exact-match flags and original-color grids.
 - `training_predictions.jsonl`: the same training y_true/y_pred, example numbers and selected crop coordinates, with step/iteration numbers.
 
@@ -57,6 +60,8 @@ Training predictions: training_predictions.jsonl
 
 `metadata.json` saves the fully resolved configuration after overrides, seed, task, run ID, config path, Git commit, source-dirty flag, source-code fingerprint, Python/executable, PyTorch/NumPy/CUDA versions and processing order. If Git information cannot be read, its fields are null and `git_error` records the failure instead of inventing a commit. A dirty checkout is not reproducible from the commit alone; the fingerprint identifies its actual source state.
 
-On successful completion, all four files upload as artifact `ranking-<run-id>`, type `ranking-diagnostics`. Files are flushed locally during training so partially completed runs retain their trace even before final upload.
+`final_candidates.jsonl` stores all unique candidate IDs, final ranks, accumulated scores, raw/EMA appearance counts, total appearance counts and first/last zero-based train steps. Grids remain saved once in `grids.jsonl`, joined by candidate ID. Appearances count raw and EMA contributions separately.
+
+On successful completion, all five files upload as artifact `ranking-<run-id>`, type `ranking-diagnostics`. Files are flushed locally during training so partially completed runs retain their trace even before final upload.
 
 The old observed transition was at train_step 1063 (iteration 1064). A rerun need not switch at exactly that step. The prior run did not save logits or score events, so these diagnostics cannot reconstruct that old score gap retroactively. Diagnostics add logging overhead and are not clean timing measurements.

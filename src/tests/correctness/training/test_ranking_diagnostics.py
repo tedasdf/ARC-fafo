@@ -130,7 +130,7 @@ def test_training_writes_complete_trace_and_uploads_after_close(fake_wandb, monk
         "train": [{"input": [[0]], "output": [[2]]}],
         "test": [{"input": [[0]]}],
     }, None)
-    config = load_config(overrides=["training.iterations=21", "training.device=cpu",
+    config = load_config(overrides=["training.iterations=51", "training.device=cpu",
         "logging.wandb=true", "logging.solution_diagnostics=true", "logging.prediction_every=10"])
     records, artifacts = [], []
     run = SimpleNamespace(id="trace-test", summary={}, log=records.append,
@@ -157,24 +157,35 @@ def test_training_writes_complete_trace_and_uploads_after_close(fake_wandb, monk
     directory = tmp_path / "ranking_trace-trace-test.ranking"
     trace = directory / "events.jsonl"
     snapshots = [json.loads(line) for line in trace.read_text().splitlines()]
-    assert [row["train_step"] for row in snapshots] == list(range(21))
+    assert [row["train_step"] for row in snapshots] == list(range(51))
     assert all(len(row["candidates"]) == len(row["selected"]) == 2 for row in snapshots)
-    assert requested == [True] * 21
+    assert requested == [True] * 51
     assert len(records[-1]["ranking/candidates"].data) == 2
+    visual_records = [record for record in records if "ranking/raw_vs_ema" in record]
+    assert [record["train_step"] for record in visual_records] == [49, 50]
+    assert len(visual_records[0]["ranking/candidates"].data) == 100
+    assert "ranking/top_two" in visual_records[0]
+    final = [json.loads(line) for line in (directory / "final_candidates.jsonl").read_text().splitlines()]
+    assert len(final) == 1
+    assert final[0]["rank"] == 1
+    assert final[0]["appearance_count"] == 102
+    assert final[0]["first_train_step"] == 0
+    assert final[0]["last_train_step"] == 50
+    assert final[0]["accumulated_score"] == snapshots[-1]["selected"][0]["accumulated_score"]
     assert artifacts[0].type == "ranking-diagnostics"
     assert {name for path, name in artifacts[0].files} == {
-        "events.jsonl", "grids.jsonl", "metadata.json", "training_predictions.jsonl",
+        "events.jsonl", "grids.jsonl", "metadata.json", "training_predictions.jsonl", "final_candidates.jsonl",
     }
     grid_entries = [json.loads(line) for line in (directory / "grids.jsonl").read_text().splitlines()]
     assert len(grid_entries) == len({entry["id"] for entry in grid_entries}) == 1
     registry = {entry["id"] for entry in grid_entries}
     assert all(candidate["id"] in registry for snapshot in snapshots for candidate in snapshot["candidates"])
     metadata = json.loads((directory / "metadata.json").read_text())
-    assert metadata["resolved_config"]["training"]["iterations"] == 21
+    assert metadata["resolved_config"]["training"]["iterations"] == 51
     assert metadata["seed"] == config.training.seed
     assert "code_commit" in metadata and len(metadata["source_sha256"]) == 64
     predictions = [json.loads(line) for line in (directory / "training_predictions.jsonl").read_text().splitlines()]
-    assert [record["train_step"] for record in predictions] == [9, 19, 20]
+    assert [record["train_step"] for record in predictions] == [9, 19, 29, 39, 49, 50]
     assert all(record["examples"][0]["y_true"] == record["examples"][0]["y_pred"] == [[2]] for record in predictions)
 
 
@@ -217,3 +228,17 @@ def test_metadata_records_resolved_config_seed_and_actual_commit(monkeypatch):
     assert metadata["seed"] == metadata["resolved_config"]["training"]["seed"] == 42
     assert metadata["resolved_config"]["training"]["iterations"] == 17
     assert metadata["contribution_order"] == ["raw", "ema"]
+
+
+def test_all_candidate_ranking_keeps_unselected_grids_and_orders_scores():
+    tracker = SolutionTracker(task())
+    tracker.enable_diagnostics()
+    tracker.update(0, outputs(1))
+    tracker.update(150, outputs(0))
+    tracker.update(151, outputs(0))
+    ranked = tracker.diagnostics.candidate_ranking(tracker)
+    assert len(ranked) == len(tracker.diagnostics.grids) == 2
+    assert [row["rank"] for row in ranked] == [1, 2]
+    assert ranked[0]["accumulated_score"] >= ranked[1]["accumulated_score"]
+    assert sum(row["appearance_count"] for row in ranked) == 6
+    assert {row["id"] for row in ranked} == set(tracker.diagnostics.grids)

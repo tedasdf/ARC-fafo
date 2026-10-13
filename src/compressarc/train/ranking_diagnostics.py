@@ -70,8 +70,10 @@ class RankingDiagnostics:
             "raw_count": 0, "ema_count": 0, "raw_log_mass": None, "ema_log_mass": None,
             "last_source": None, "last_uncertainty": None, "last_contribution": None,
             "last_top1_promotion_source": None,
+            "first_train_step": self.last["train_step"], "last_train_step": self.last["train_step"],
         })
         counts[source + "_count"] += 1
+        counts["last_train_step"] = self.last["train_step"]
         mass_key = source + "_log_mass"
         counts[mass_key] = float(np.logaddexp(-np.inf if counts[mass_key] is None else counts[mass_key], score))
         counts.update(last_source=source, last_uncertainty=float(uncertainty), last_contribution=float(score))
@@ -104,6 +106,14 @@ class RankingDiagnostics:
     def finish_step(self, tracker):
         self.last["selected"] = self.selected_snapshot(tracker)
         self.pending.append(self.last)
+
+    def candidate_ranking(self, tracker):
+        """Rank all unique candidates by accumulated score; ties retain arrival order."""
+        ordered = sorted(self.grids, key=lambda identity: tracker.scores[hash(self.grids[identity])], reverse=True)
+        return [{"rank": rank, "id": identity,
+                 "accumulated_score": tracker.scores[hash(self.grids[identity])],
+                 "appearance_count": self.sources[identity]["raw_count"] + self.sources[identity]["ema_count"],
+                 **self.sources[identity]} for rank, identity in enumerate(ordered, 1)]
 
     def scalar_metrics(self):
         payload = {}

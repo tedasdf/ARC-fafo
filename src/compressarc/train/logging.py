@@ -194,22 +194,34 @@ def ranking_tables(diagnostics):
     return candidates, selected, grids
 
 
+def highest_scoring_candidates_table(tracker, limit=20):
+    import wandb
+    fields = ("rank", "id", "accumulated_score", "appearance_count", "raw_count", "ema_count",
+              "first_train_step", "last_train_step")
+    table = wandb.Table(columns=list(fields))
+    for entry in tracker.diagnostics.candidate_ranking(tracker)[:limit]:
+        table.add_data(*[entry[field] for field in fields])
+    return table
+
+
 def log_ranking_trace(run, directory):
     import wandb
     artifact = wandb.Artifact(name=f"ranking-{run.id}", type="ranking-diagnostics")
-    for filename in ("events.jsonl", "grids.jsonl", "metadata.json", "training_predictions.jsonl"):
+    for filename in ("events.jsonl", "grids.jsonl", "metadata.json", "training_predictions.jsonl", "final_candidates.jsonl"):
         artifact.add_file(str(directory / filename), name=filename)
     run.log_artifact(artifact)
 
 
 def log_training_step(run, task, tracker, train_step, metrics, include_prediction=False,
-                      include_accuracy=False):
+                      include_accuracy=False, include_diagnostics=None):
     """Log correctness separately from the optional prediction-image cadence."""
     if run is None:
         return
     import matplotlib.pyplot as plt
     import wandb
 
+    if include_diagnostics is None:
+        include_diagnostics = include_prediction
     payload = training_metrics_payload(train_step, metrics)
     diagnostics = getattr(tracker, "diagnostics", None)
     if diagnostics is not None and diagnostics.last is not None:
@@ -225,14 +237,19 @@ def log_training_step(run, task, tracker, train_step, metrics, include_predictio
         )
         payload["predictions/solutions"] = wandb.Image(figure)
         payload["train/predictions"] = training_predictions_table(task, metrics["outputs"], tracker, metrics.get("training_prediction_records"))
-        if diagnostics is not None:
-            payload["ranking/candidates"], payload["ranking/selected"], payload["ranking/grids"] = ranking_tables(diagnostics)
-            candidate_figure = plot_predictions(task, *[diagnostics.grids[entry["id"]] for entry in diagnostics.last["candidates"]])
-            payload["ranking/raw_vs_ema"] = wandb.Image(candidate_figure, caption="Raw (left), EMA (right)")
-            plt.close(candidate_figure)
         plt.close(figure)
+    if include_diagnostics and diagnostics is not None:
+        payload["ranking/candidates"], payload["ranking/selected"], payload["ranking/grids"] = ranking_tables(diagnostics)
+        payload["ranking/highest_scoring"] = highest_scoring_candidates_table(tracker)
+        for key, grids in (
+            ("ranking/raw_vs_ema", [diagnostics.grids[entry["id"]] for entry in diagnostics.last["candidates"]]),
+            ("ranking/top_two", [tracker.solution_most_frequent, tracker.solution_second_most_frequent]),
+        ):
+            figure = plot_predictions(task, *grids)
+            payload[key] = wandb.Image(figure)
+            plt.close(figure)
     run.log(payload)
-    if include_prediction and diagnostics is not None:
+    if include_diagnostics and diagnostics is not None:
         diagnostics.pending.clear()
         diagnostics.pending_grids.clear()
 
