@@ -1,0 +1,29 @@
+# Original primitive baseline in the current src trainer; all eight pilot tasks.
+# Single-task ranking diagnostic: 50cb2852, 1500 updates, seed 0.
+# Fixed budget: the current trainer does not implement legacy early stopping.
+experiment:
+  name: original_guess_diagnostics_seed0
+  task_ids:
+    - "50cb2852"
+model:
+  shift_implementation: primitives
+  direction_share_implementation: primitives
+  direction_share_dim: 8
+  cummax_implementation: primitives
+  multitensor_constraints: strict
+  lse_tau: 0.1
+  layer_timing: false
+training:
+  split: training
+  iterations: 1500
+  seed: 0
+  device: cuda:0
+logging:
+  wandb: true
+  wandb_project: compressarc
+  wandb_entity: arc_agi
+  wandb_tags: [pilot8, full-training, seed0, original, guess-diagnostics]
+  latent_pca: false
+  wandb_log_every: 1
+  prediction_every: 10
+  solution_diagnostics: true

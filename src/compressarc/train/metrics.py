@@ -26,8 +26,13 @@ class SolutionTracker:
         self.ema_x_mask = torch.zeros((task.n_test, task.n_x), device="cpu")
         self.ema_y_mask = torch.zeros((task.n_test, task.n_y), device="cpu")
         self.scores = {}
+        self.diagnostics = None
         self.solution_most_frequent = None
         self.solution_second_most_frequent = None
+
+    def enable_diagnostics(self):
+        from .ranking_diagnostics import RankingDiagnostics
+        self.diagnostics = RankingDiagnostics()
 
     def best_slice(self, mask, length):
         lengths = [length] if length is not None else range(1, mask.shape[0] + 1)
@@ -74,12 +79,23 @@ class SolutionTracker:
             (logits, x_mask, y_mask, 0),
             (self.ema_logits, self.ema_x_mask, self.ema_y_mask, -4),
         ]
-        for cand_logits, cand_x, cand_y, penalty in candidates:
+        if self.diagnostics is not None:
+            self.diagnostics.start_step(train_step)
+        for index, (cand_logits, cand_x, cand_y, penalty) in enumerate(candidates):
             solution, uncertainty = self.decode(cand_logits, cand_x, cand_y)
-            score = -10 * uncertainty + penalty - (10 if train_step < 150 else 0)
+            early_penalty = 10 if train_step < 150 else 0
+            score = -10 * uncertainty + penalty - early_penalty
             key = hash(solution)
-            self.scores[key] = float(np.logaddexp(self.scores.get(key, -np.inf), score))
+            previous_score = self.scores.get(key, -np.inf)
+            previous_top1, previous_top2 = self.solution_most_frequent, self.solution_second_most_frequent
+            self.scores[key] = float(np.logaddexp(previous_score, score))
             self._update_top_two(key, solution)
+            if self.diagnostics is not None:
+                self.diagnostics.record_candidate(self, "raw" if index == 0 else "ema", solution,
+                                                   uncertainty, score, previous_score, previous_top1, previous_top2,
+                                                   early_step_penalty=-early_penalty, ema_penalty=penalty)
+        if self.diagnostics is not None:
+            self.diagnostics.finish_step(self)
 
     def _update_top_two(self, key, solution):
         if self.solution_most_frequent is None:

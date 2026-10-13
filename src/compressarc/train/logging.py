@@ -1,6 +1,7 @@
 """Puzzle, prediction, W&B, and optional latent PCA logging helpers."""
 
 import ast
+import json
 from pathlib import Path
 
 import numpy as np
@@ -38,6 +39,7 @@ def initialize_wandb(config, task, model, optimizer):
             "canvas_width": task.n_y,
             "model": OmegaConf.to_container(config.model, resolve=True),
             "training": OmegaConf.to_container(config.training, resolve=True),
+            "logging": OmegaConf.to_container(config.logging, resolve=True),
             "optimizer": type(optimizer).__name__,
             "parameter_count": sum(p.numel() for p in model.weights_list),
         },
@@ -47,6 +49,7 @@ def initialize_wandb(config, task, model, optimizer):
     run.define_metric("train_step")
     run.define_metric("train/*", step_metric="train_step")
     run.define_metric("predictions/*", step_metric="train_step")
+    run.define_metric("ranking/*", step_metric="train_step")
     return run
 
 
@@ -128,13 +131,11 @@ def reference_outputs_table(task):
     return table
 
 
-def training_predictions_table(task, outputs, tracker):
-    """Decode the current forward sample for each known training output shape."""
-    import wandb
+def training_prediction_records(task, outputs, tracker):
+    """Original-color y_true/y_pred and their output-mode crop for train cases."""
     logits, x_mask, y_mask = (value.detach().cpu() for value in outputs)
-    table = wandb.Table(columns=["example", "expected_y", "predicted_y", "exact_match",
-                                 "expected_grid", "predicted_grid"])
     colors = np.asarray(task.colors)
+    result = []
     for index, case in enumerate(task.unprocessed_problem["train"]):
         expected = np.asarray(case["output"], dtype=np.int64)
         height, width = expected.shape
@@ -142,10 +143,22 @@ def training_predictions_table(task, outputs, tracker):
         y0, y1 = tracker.best_slice(y_mask[index, :, 1], width)
         indices = torch.argmax(logits[index, :, x0:x1, y0:y1, 1], dim=0).numpy()
         predicted = colors[indices]
-        table.add_data(index + 1, wandb.Image(grid_image(expected)),
-                       wandb.Image(grid_image(predicted)), bool(np.array_equal(expected, predicted)),
-                       expected.tolist(), predicted.tolist())
+        result.append({"example": index + 1, "y_true": expected.tolist(), "y_pred": predicted.tolist(),
+                       "exact_match": bool(np.array_equal(expected, predicted)),
+                       "crop": {"row_start": x0, "row_end": x1, "column_start": y0, "column_end": y1}})
+    return result
+
+
+def training_predictions_table(task, outputs, tracker, records=None):
+    import wandb
+    table = wandb.Table(columns=["example", "expected_y", "predicted_y", "exact_match",
+                                 "expected_grid", "predicted_grid"])
+    for record in records if records is not None else training_prediction_records(task, outputs, tracker):
+        table.add_data(record["example"], wandb.Image(grid_image(record["y_true"])),
+                       wandb.Image(grid_image(record["y_pred"])), record["exact_match"],
+                       record["y_true"], record["y_pred"])
     return table
+
 
 def log_problem(run, task):
     """Log the ARC puzzle grid montage once at the beginning of a run."""
@@ -160,6 +173,35 @@ def log_problem(run, task):
     plt.close(figure)
 
 
+def ranking_tables(diagnostics):
+    """Events reference IDs; newly seen candidate grids appear once in a registry."""
+    import wandb
+    candidate_fields = ("contribution_index", "source", "id", "uncertainty", "confidence_score",
+        "early_step_penalty", "ema_penalty", "contribution_score", "accumulated_before", "accumulated_after",
+        "top1_after", "top1_after_score", "top2_after", "top2_after_score", "top1_changed", "top2_changed")
+    selected_fields = ("rank", "id", "accumulated_score", "raw_count", "ema_count", "raw_log_mass",
+        "ema_log_mass", "last_source", "last_uncertainty", "last_contribution", "last_top1_promotion_source")
+    candidates = wandb.Table(columns=["train_step", "iteration", *candidate_fields])
+    selected = wandb.Table(columns=["train_step", "iteration", *selected_fields])
+    grids = wandb.Table(columns=["id", "first_train_step", "grids_json"])
+    for record in diagnostics.pending:
+        for candidate in record["candidates"]:
+            candidates.add_data(record["train_step"], record["iteration"], *[candidate[key] for key in candidate_fields])
+        for selection in record["selected"]:
+            selected.add_data(record["train_step"], record["iteration"], *[selection[key] for key in selected_fields])
+    for entry in diagnostics.pending_grids:
+        grids.add_data(entry["id"], entry["first_train_step"], json.dumps(entry["grid"]))
+    return candidates, selected, grids
+
+
+def log_ranking_trace(run, directory):
+    import wandb
+    artifact = wandb.Artifact(name=f"ranking-{run.id}", type="ranking-diagnostics")
+    for filename in ("events.jsonl", "grids.jsonl", "metadata.json", "training_predictions.jsonl"):
+        artifact.add_file(str(directory / filename), name=filename)
+    run.log_artifact(artifact)
+
+
 def log_training_step(run, task, tracker, train_step, metrics, include_prediction=False,
                       include_accuracy=False):
     """Log correctness separately from the optional prediction-image cadence."""
@@ -169,6 +211,9 @@ def log_training_step(run, task, tracker, train_step, metrics, include_predictio
     import wandb
 
     payload = training_metrics_payload(train_step, metrics)
+    diagnostics = getattr(tracker, "diagnostics", None)
+    if diagnostics is not None and diagnostics.last is not None:
+        payload.update(diagnostics.scalar_metrics())
     if (include_accuracy or include_prediction) and task.solution_hash is not None:
         first_correct = hash(tracker.solution_most_frequent) == task.solution_hash
         second_correct = hash(tracker.solution_second_most_frequent) == task.solution_hash
@@ -179,9 +224,17 @@ def log_training_step(run, task, tracker, train_step, metrics, include_predictio
             task, tracker.solution_most_frequent, tracker.solution_second_most_frequent
         )
         payload["predictions/solutions"] = wandb.Image(figure)
-        payload["train/predictions"] = training_predictions_table(task, metrics["outputs"], tracker)
+        payload["train/predictions"] = training_predictions_table(task, metrics["outputs"], tracker, metrics.get("training_prediction_records"))
+        if diagnostics is not None:
+            payload["ranking/candidates"], payload["ranking/selected"], payload["ranking/grids"] = ranking_tables(diagnostics)
+            candidate_figure = plot_predictions(task, *[diagnostics.grids[entry["id"]] for entry in diagnostics.last["candidates"]])
+            payload["ranking/raw_vs_ema"] = wandb.Image(candidate_figure, caption="Raw (left), EMA (right)")
+            plt.close(candidate_figure)
         plt.close(figure)
     run.log(payload)
+    if include_prediction and diagnostics is not None:
+        diagnostics.pending.clear()
+        diagnostics.pending_grids.clear()
 
 
 def log_final_results(run, task, tracker):

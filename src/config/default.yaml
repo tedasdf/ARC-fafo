@@ -40,6 +40,7 @@ logging:
   wandb_mode: online
   wandb_log_every: 1
   prediction_every: 10
+  solution_diagnostics: false
   wandb_tags: []
   latent_pca: false
   pca_samples: 100

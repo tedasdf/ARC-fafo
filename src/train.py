@@ -17,6 +17,8 @@ from compressarc.train.logging import (
     log_final_results,
     log_latent_pca,
     log_model_checkpoint,
+    log_ranking_trace,
+    training_prediction_records,
     log_problem,
     log_training_step,
 )
@@ -174,6 +176,18 @@ def main(argv=None):
                 if run is not None:
                     run.finish()
         log_problem(run, task)
+        diagnostic_file = diagnostic_grids = diagnostic_predictions = None
+        diagnostic_path = None
+        if run is not None and logging_config.get("solution_diagnostics", False):
+            from compressarc.train.ranking_diagnostics import run_metadata
+            tracker.enable_diagnostics()
+            diagnostic_path = args.output_dir / f"{task.task_name}-{run.id}.ranking"
+            diagnostic_path.mkdir(parents=True, exist_ok=True)
+            metadata = run_metadata(config, task.task_name, run.id, args.config)
+            (diagnostic_path / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+            diagnostic_file = (diagnostic_path / "events.jsonl").open("w", encoding="utf-8")
+            diagnostic_grids = (diagnostic_path / "grids.jsonl").open("w", encoding="utf-8")
+            diagnostic_predictions = (diagnostic_path / "training_predictions.jsonl").open("w", encoding="utf-8")
 
         last_metrics = None
         try:
@@ -185,7 +199,8 @@ def main(argv=None):
                 )
                 # Correctness is evaluated every update; images keep their own cadence.
                 accuracy_step = run is not None and task.solution_hash is not None
-                evaluation_step = prediction_step or accuracy_step
+                diagnostic_step = getattr(tracker, "diagnostics", None) is not None
+                evaluation_step = prediction_step or accuracy_step or diagnostic_step
                 last_metrics = take_step(
                     task, model, optimizer, train_step, training_config,
                     return_outputs=evaluation_step,
@@ -193,6 +208,19 @@ def main(argv=None):
                 progress.set_postfix(loss=f"{last_metrics['loss']:.3f}")
                 if evaluation_step:
                     tracker.update(train_step, last_metrics["outputs"])
+                    if diagnostic_file is not None:
+                        for entry in tracker.diagnostics.unwritten_grids:
+                            diagnostic_grids.write(json.dumps(entry, allow_nan=False) + "\n")
+                        diagnostic_grids.flush()
+                        tracker.diagnostics.unwritten_grids.clear()
+                        diagnostic_file.write(json.dumps(tracker.diagnostics.last, allow_nan=False) + "\n")
+                        diagnostic_file.flush()
+                        if prediction_step:
+                            records = training_prediction_records(task, last_metrics["outputs"], tracker)
+                            last_metrics["training_prediction_records"] = records
+                            diagnostic_predictions.write(json.dumps({"train_step": train_step,
+                                "iteration": train_step + 1, "examples": records}, allow_nan=False) + "\n")
+                            diagnostic_predictions.flush()
 
                 if run is not None and (
                     train_step % logging_config.wandb_log_every == 0 or evaluation_step
@@ -204,7 +232,7 @@ def main(argv=None):
 
             if args.save_checkpoints:
                 checkpoint_path = args.output_dir / f"{task.task_name}.pt"
-                serial_metrics = {key: value for key, value in last_metrics.items() if key not in ("outputs", "kl_components")}
+                serial_metrics = {key: value for key, value in last_metrics.items() if key not in ("outputs", "kl_components", "training_prediction_records")}
                 torch.save(
                     {
                         "task": task.task_name,
@@ -225,6 +253,11 @@ def main(argv=None):
                     },
                 )
 
+            if diagnostic_file is not None:
+                for handle in (diagnostic_file, diagnostic_grids, diagnostic_predictions):
+                    handle.close()
+                log_ranking_trace(run, diagnostic_path)
+
             if run is not None:
                 log_final_results(run, task, tracker)
                 log_latent_pca(run, model, logging_config)
@@ -239,6 +272,9 @@ def main(argv=None):
                     for guess in (tracker.solution_most_frequent, tracker.solution_second_most_frequent)
                 ))
         finally:
+            if diagnostic_file is not None:
+                for handle in (diagnostic_file, diagnostic_grids, diagnostic_predictions):
+                    handle.close()
             if run is not None:
                 run.finish()
 
