@@ -68,11 +68,11 @@ explicit `--seed` flags are supplied. Sharding distributes all 240 jobs exactly
 once. Sampling seed 42 chooses the task subset; training seeds 0/1/2 control
 model initialization and stochastic training independently on the same tasks.
 
-## Slurm on L4
+## Slurm on A40
 
 Four task-group arrays are ready under `src/slurm/final_tasks_*.sbatch`.
 Each owns five tasks and runs all four variants and three seeds for those tasks.
-See [submission instructions](slurm/FINAL_L4.md). Each has 60 elements, one
+See [submission instructions](slurm/FINAL_SLURM.md). Each has 60 elements, one
 GPU per active element and one active element per array by default.
 
 ## W&B tags
@@ -80,3 +80,5 @@ GPU per active element and one active element per array by default.
 Shared tags: `arc-agi`, `training`, `final-ablation`, `sample20`, `steps1500`,
 `strict`. Each run also has `seed0`, `seed1` or `seed2`, and one variant tag:
 `original`, `projected-conv`, `projected-d4` or `projected-lse`.
+
+All final jobs now use A40 in the `gpu` partition, account `vf38`, QoS `normal`.

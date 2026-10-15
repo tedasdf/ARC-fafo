@@ -20,7 +20,10 @@ def test_task_arrays_cover_each_task_variant_seed_once(monkeypatch):
         assert b"\r" not in raw
         text=raw.decode()
         assert "#SBATCH --array=0-59%1" in text
-        assert "#SBATCH --gres=gpu:L4:1" in text
+        assert "#SBATCH --gres=gpu:A40:1" in text
+        assert "#SBATCH --partition=gpu" in text
+        assert "#SBATCH --qos=normal" in text
+        assert "#SBATCH --account=vf38" in text
         assert '--shard-count 60 --shard-index "${SLURM_ARRAY_TASK_ID}"' in text
         tasks=shlex.split(re.search(r"^TASKS=\((.*?)\)$",text,re.MULTILINE).group(1))
         assert len(tasks)==len(set(tasks))==5

@@ -1,11 +1,15 @@
 #!/bin/bash -l
 #SBATCH --job-name=arc-single-test
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:L4:1
+#SBATCH --account=vf38
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=teedsingyau@gmail.com
+#SBATCH --qos=normal
+#SBATCH --gres=gpu:A40:1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
-#SBATCH --time=04:00:00
+#SBATCH --time=01:00:00
 #SBATCH --output=slurm-single-%j.out
 #SBATCH --error=slurm-single-%j.err
 

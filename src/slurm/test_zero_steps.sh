@@ -1,7 +1,11 @@
 #!/bin/bash -l
 #SBATCH --job-name=arc-zero-steps
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:L4:1
+#SBATCH --account=vf38
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=teedsingyau@gmail.com
+#SBATCH --qos=normal
+#SBATCH --gres=gpu:A40:1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
@@ -66,7 +70,7 @@ if not seeds or len(set(seeds)) != len(seeds) or any(seed < 0 for seed in seeds)
 device = torch.device(args.device)
 if device.type == "cuda":
     if not torch.cuda.is_available():
-        raise SystemExit("FAIL: no CUDA GPU visible; run inside an allocated L4 job")
+        raise SystemExit("FAIL: no CUDA GPU visible; run inside an allocated GPU job")
     torch.cuda.set_device(device)
     print("GPU:", torch.cuda.get_device_name(device), flush=True)
 print("Python:", sys.executable, "Torch:", torch.__version__, flush=True)
