@@ -74,3 +74,7 @@ ARC_SKIP_ENV=1 bash src/slurm/test_zero_steps.sh --device cpu --seed 0
 Normal training deliberately rejects `training.iterations=0`; this dedicated
 script tests setup without weakening that guard. GPU GRES/account/QoS rules from
 the submission section also apply to this script.
+
+Repository discovery checks the current directory first, then Slurm's submit
+directory and the script location. To diagnose paths without loading modules
+or using GPUs, run `bash src/slurm/test_zero_steps.sh --check-root`.

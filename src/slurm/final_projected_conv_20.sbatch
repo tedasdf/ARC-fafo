@@ -11,10 +11,26 @@
 #SBATCH --error=slurm-projected_conv-%A_%a.err
 
 set -euo pipefail
-cd "${SLURM_SUBMIT_DIR:?Submit from the ARC-fafo repository root}"
-if [[ ! -f src/run_training_timing.py ]]; then
-    printf 'Submit from the ARC-fafo repository root.\n' >&2
+# Interactive allocations can retain a stale SLURM_SUBMIT_DIR.
+START_DIR="$PWD"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT=""
+for candidate in "$START_DIR" "${SLURM_SUBMIT_DIR:-}" "$SCRIPT_DIR/../.." "$SCRIPT_DIR"; do
+    if [[ -n "$candidate" && -f "$candidate/src/run_training_timing.py" ]]; then
+        REPO_ROOT="$(cd -- "$candidate" && pwd -P)"
+        break
+    fi
+done
+if [[ -z "$REPO_ROOT" ]]; then
+    printf 'Cannot locate src/run_training_timing.py.\nCurrent directory: %s\nSLURM_SUBMIT_DIR: %s\nScript directory: %s\n' \
+        "$START_DIR" "${SLURM_SUBMIT_DIR:-<unset>}" "$SCRIPT_DIR" >&2
+    printf 'Check that the updated ARC-fafo src/ directory is present on this machine.\n' >&2
     exit 1
+fi
+cd -- "$REPO_ROOT"
+if [[ "${1:-}" == "--check-root" ]]; then
+    printf 'Repository root: %s\n' "$REPO_ROOT"
+    exit 0
 fi
 module load miniforge3
 mamba activate SymARC
