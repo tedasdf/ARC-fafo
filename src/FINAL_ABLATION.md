@@ -67,3 +67,9 @@ run one seed. Use repeated `--seed` flags to override the sweep, for example
 explicit `--seed` flags are supplied. Sharding distributes all 240 jobs exactly
 once. Sampling seed 42 chooses the task subset; training seeds 0/1/2 control
 model initialization and stochastic training independently on the same tasks.
+
+## Slurm on L4
+
+Four per-variant arrays are ready under `src/slurm/final_*_20.sbatch`.
+See [submission instructions](slurm/FINAL_L4.md). Each has 60 elements, one
+GPU per active element and one active element per array by default.

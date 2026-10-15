@@ -1,0 +1,31 @@
+#!/bin/bash -l
+#SBATCH --job-name=arc-projected_conv
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:L4:1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH --time=04:00:00
+#SBATCH --array=0-59%1
+#SBATCH --output=slurm-projected_conv-%A_%a.out
+#SBATCH --error=slurm-projected_conv-%A_%a.err
+
+set -euo pipefail
+cd "${SLURM_SUBMIT_DIR:?Submit from the ARC-fafo repository root}"
+if [[ ! -f src/run_training_timing.py ]]; then
+    printf 'Submit from the ARC-fafo repository root.\n' >&2
+    exit 1
+fi
+module load miniforge3
+mamba activate SymARC
+PYTHON_BIN="$(command -v python)"
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
+export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
+export PYTHONUNBUFFERED=1
+OUTPUT_ROOT="${ARC_OUTPUT_ROOT:-outputs/final_ablation/projected_conv/${SLURM_ARRAY_JOB_ID}}"
+"$PYTHON_BIN" -c 'import sys, torch; print(sys.executable, torch.__version__); assert torch.cuda.is_available(), "No CUDA GPU visible"; print(torch.cuda.get_device_name(0))'
+srun "$PYTHON_BIN" src/run_training_timing.py --mode train \
+    --config src/config/models/final_projected_conv_20.yaml \
+    --shard-count 60 --shard-index "${SLURM_ARRAY_TASK_ID}" \
+    --set training.device=cuda:0 \
+    --save-checkpoints --output-dir "$OUTPUT_ROOT"
