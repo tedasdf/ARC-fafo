@@ -73,6 +73,10 @@ print("Python:", sys.executable, "Torch:", torch.__version__, flush=True)
 print("ZERO optimizer updates; W&B/checkpoint/model uploads disabled", flush=True)
 configs = [Path("src/config/models") / (name + ".yaml") for name in (
     "final_original_20", "final_projected_conv_20", "final_projected_d4_20", "final_projected_lse_20")]
+# Preprocessing explicitly uses torch.get_default_device(); a context alone
+# does not reliably update that global default.
+torch.set_default_device(device)
+expected_device = torch.get_default_device()
 completed = 0
 with torch.device(device):
     for path in configs:
@@ -94,6 +98,18 @@ with torch.device(device):
                 raise SystemExit(f"FAIL: task not found: {args.task}")
             task = tasks.pop()
             model = ARCCompressor(task, config.model)
+            placed = {"task.problem": task.problem, "task.masks": task.masks}
+            if task.solution is not None:
+                placed["task.solution"] = task.solution
+            placed.update({f"weight[{i}]": parameter for i, parameter in enumerate(model.weights_list)})
+            for kind in ("shift", "cummax", "direction_share"):
+                layer = getattr(model, kind)
+                if isinstance(layer, torch.nn.Module):
+                    placed.update({f"{kind}.{name}": value for name, value in layer.named_buffers()})
+            wrong = {name: str(value.device) for name, value in placed.items() if value.device != expected_device}
+            if wrong:
+                raise SystemExit(f"FAIL: expected all model/task tensors on {expected_device}; mismatches: {wrong}")
+            del placed, wrong
             outputs = None
             if not args.init_only:
                 with torch.no_grad():

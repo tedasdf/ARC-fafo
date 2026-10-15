@@ -78,3 +78,6 @@ the submission section also apply to this script.
 Repository discovery checks the current directory first, then Slurm's submit
 directory and the script location. To diagnose paths without loading modules
 or using GPUs, run `bash src/slurm/test_zero_steps.sh --check-root`.
+
+The smoke test sets PyTorch's global default device explicitly and verifies
+that task tensors, parameters and buffers are on the chosen device before forward.

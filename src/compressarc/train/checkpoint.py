@@ -79,8 +79,10 @@ def load_inference_checkpoint(path, device="cpu", restore_rng=True):
         raise ValueError("Unsupported inference checkpoint schema")
     target = torch.device(device)
     previous_dtype = torch.get_default_dtype()
+    previous_device = torch.get_default_device()
     try:
         torch.set_default_dtype(getattr(torch, payload["dtype"]))
+        torch.set_default_device(target)
         with torch.device(target):
             task = Task(payload["task"], payload["task_problem"], None,
                         multitensor_constraints=payload["task_metadata"]["multitensor_constraints"])
@@ -90,6 +92,7 @@ def load_inference_checkpoint(path, device="cpu", restore_rng=True):
             model = ARCCompressor(task, config.model)
     finally:
         torch.set_default_dtype(previous_dtype)
+        torch.set_default_device(previous_device)
     if len(model.weights_list) != len(payload["weights"]):
         raise ValueError("Checkpoint parameter count does not match reconstructed model")
     with torch.no_grad():
