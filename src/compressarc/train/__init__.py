@@ -1,4 +1,4 @@
-"""Training objective, metrics, and logging helpers."""
+"""Training objective and prediction tracking."""
 
 from .objective import take_step
 

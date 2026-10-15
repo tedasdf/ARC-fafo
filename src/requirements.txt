@@ -10,7 +10,6 @@ tqdm==4.66.6
 omegaconf==2.3.0
 
 # W&B scalar/image logging and final .pt checkpoint artifacts.
-wandb==0.28.1
 
 # Direction-share, LSE, shift, and training correctness suites.
 pytest==9.1.1
@@ -22,3 +21,4 @@ setuptools==75.8.0
 # Required by final_pilot_8.yaml and other configs selecting a Triton backend.
 # GPU execution requires CUDA; native Windows skips this dependency.
 triton==3.1.0; platform_system == "Linux" and platform_machine == "x86_64"
+wandb==0.28.1

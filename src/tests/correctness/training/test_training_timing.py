@@ -8,28 +8,6 @@ from compressarc.train.timing import TrainingTiming
 from training_metrics_spec import COUNTS, OPERATIONS, SETUP, TRAINING
 
 
-class RecordingRun:
-    def __init__(self):
-        self.config = {}
-        self.summary = {}
-        self.finished = False
-        self.history = []
-        self.definitions = []
-        self.log_step_counts = []
-        self.completed_steps = lambda: 0
-
-    def log(self, record):
-        assert not self.finished
-        self.history.append(dict(record))
-        self.log_step_counts.append(self.completed_steps())
-
-    def define_metric(self, name, **kwargs):
-        self.definitions.append((name, kwargs))
-
-    def finish(self):
-        self.finished = True
-
-
 @pytest.mark.parametrize("variant", ["primitives", "d4", "optimised"])
 def test_clean_and_profile_passes_share_training_and_log_distinct_metrics(monkeypatch, variant):
     problem = {
@@ -38,7 +16,7 @@ def test_clean_and_profile_passes_share_training_and_log_distinct_metrics(monkey
     }
     task = Task("timing_test", problem, None)
     monkeypatch.setattr(train.preprocessing, "preprocess_tasks", lambda *a, **k: [task])
-    models, runs, steps = [], [], []
+    models, steps = [], []
     original_model = train.ARCCompressor
     original_step = train.take_step
 
@@ -47,18 +25,11 @@ def test_clean_and_profile_passes_share_training_and_log_distinct_metrics(monkey
         models.append(model)
         return model
 
-    def capture_run(*args):
-        run = RecordingRun()
-        run.completed_steps = lambda: len(steps)
-        runs.append(run)
-        return run
-
     def capture_step(*args, **kwargs):
         steps.append(args[3])
         return original_step(*args, **kwargs)
 
     monkeypatch.setattr(train, "ARCCompressor", capture_model)
-    monkeypatch.setattr(train, "initialize_wandb", capture_run)
     monkeypatch.setattr(train, "take_step", capture_step)
     overrides = [
         "training.device=cpu", "model.n_layers=1", "model.channel_dim_shared=2",
@@ -86,21 +57,6 @@ def test_clean_and_profile_passes_share_training_and_log_distinct_metrics(monkey
     assert len(models[0].weights_list) == len(models[1].weights_list)
     for clean_weight, profiled_weight in zip(models[0].weights_list, models[1].weights_list):
         torch.testing.assert_close(clean_weight, profiled_weight, rtol=0, atol=0)
-    assert runs[0].summary == clean and runs[1].summary == profiled
-    assert runs[0].history == [{"train_step": 0, "timing/first_step_ms": clean["timing/first_step_ms"]}]
-    assert runs[0].log_step_counts == [3]  # First-step record also flushes after measurement.
-    assert [record["train_step"] for record in runs[1].history] == [1, 2]
-    assert runs[1].log_step_counts == [6, 6]  # Flush after every training step has finished.
-    assert ("timing/*", {"step_metric": "train_step"}) in runs[1].definitions
-    for record in runs[1].history:
-        assert set(record) == {"train_step", *OPERATIONS}
-        assert all(record[key] >= 0 for key in OPERATIONS)
-    for key in OPERATIONS:
-        mean = sum(record[key] for record in runs[1].history) / 2
-        assert runs[1].summary[key] == pytest.approx(mean)
-    assert all(run.finished for run in runs)
-    assert [run.config["benchmark_pass"] for run in runs] == ["clean", "operations"]
-    assert all(run.config["actual_training_iterations"] == 3 for run in runs)
 
 
 def test_clean_memory_peaks_reset_after_warmup_before_measured_updates(monkeypatch):

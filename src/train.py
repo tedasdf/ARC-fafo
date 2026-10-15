@@ -1,4 +1,4 @@
-"""Train ARCCompressor tasks locally or on Modal and optionally log to W&B."""
+"""Train ARCCompressor tasks locally or on Modal with optional correctness logging."""
 
 import argparse
 import json
@@ -6,24 +6,16 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from omegaconf import OmegaConf
 from tqdm import tqdm
 
 import preprocessing
 from config import load_config
 from compressarc.model.model import ARCCompressor
-from compressarc.train.logging import (
-    initialize_wandb,
-    log_final_results,
-    log_latent_pca,
-    log_model_checkpoint,
-    log_ranking_trace,
-    training_prediction_records,
-    log_problem,
-    log_training_step,
-)
 from compressarc.train import take_step
 from compressarc.train.metrics import SolutionTracker
+from compressarc.train.checkpoint import save_inference_checkpoint
+from compressarc.train.diagnostics import TrainingDiagnostics
+from compressarc.train.logging import initialize_wandb, log_training_metrics, log_final_candidates, log_model_checkpoint, RunSummary
 
 
 def parse_args(argv=None):
@@ -63,7 +55,7 @@ def parse_args(argv=None):
         help="GPU type for the Modal backend (default: T4)",
     )
     parser.add_argument("--save-checkpoints", action="store_true",
-                        help="Save final .pt checkpoints and upload model artifacts when W&B is enabled")
+                        help="Save final .pt checkpoints locally")
     return parser.parse_args(argv)
 
 
@@ -75,7 +67,7 @@ def main(argv=None):
     args = parse_args() if argv is None else parse_args(argv)
     mode = getattr(args, "mode", "train")
     config = merge_cli_config(args)
-    training_config, logging_config = config.training, config.logging
+    training_config = config.training
     if mode == "benchmark":
         if not args.task or args.backend != "local":
             raise ValueError("Benchmark mode requires --task and the local backend")
@@ -86,15 +78,6 @@ def main(argv=None):
             raise ValueError("Disable model.layer_timing for clean/profile pass separation")
     if training_config.iterations < 1 or training_config.learning_rate <= 0 or training_config.annealing_steps < 1:
         raise ValueError("iterations, learning_rate, and annealing_steps must be positive")
-    if logging_config.latent_pca and (
-        logging_config.pca_samples < 1
-        or logging_config.pca_components < 1
-        or logging_config.pca_max_panels < 1
-    ):
-        raise ValueError("PCA sample, component, and panel counts must be positive")
-    if logging_config.wandb_log_every < 1 or logging_config.prediction_every < 1:
-        raise ValueError("W&B and prediction logging intervals must be positive")
-
     if args.backend == "modal":
         from compressarc.train.modal_launcher import launch_modal
 
@@ -132,155 +115,61 @@ def main(argv=None):
         args.output_dir.mkdir(parents=True, exist_ok=True)
 
     for task in tasks:
-        model = setup_call("setup/model_ms", lambda: ARCCompressor(task, config.model))
-        optimizer = setup_call("setup/optimizer_ms", lambda: torch.optim.Adam(
-            model.weights_list,
-            lr=training_config.learning_rate,
-            betas=tuple(training_config.optimizer_betas),
-        ))
-        tracker = SolutionTracker(task)
-        if timing is not None:
-            timing.finish_setup()
-        run = initialize_wandb(config, task, model, optimizer)
-        if timing is not None:
-            try:
-                if run is not None:
-                    configuration = config.get("experiment", {}).get(
-                        "name", Path(args.config).stem if args.config else "default",
-                    )
-                    run.name = f"{task.task_name}-{configuration}-{args.benchmark_pass}"
-                    run.config.update({
-                        "mode": "benchmark", "benchmark_pass": args.benchmark_pass,
-                        "configuration": configuration, "config_source": str(args.config) if args.config else None,
-                        "warmup_iterations": args.warmup_iterations,
-                        "measured_iterations": args.measured_iterations,
-                        "actual_training_iterations": args.warmup_iterations + args.measured_iterations,
-                        "operation_clock": "cuda_events" if device_object.type == "cuda" else "host_wall_cpu_smoke",
-                        "gpu_name": torch.cuda.get_device_name(device_object) if device_object.type == "cuda" else None,
-                    })
+        run = initialize_wandb(config, task) if timing is None else None
+        with RunSummary(run, device_object):
+            model = setup_call("setup/model_ms", lambda: ARCCompressor(task, config.model))
+            optimizer = setup_call("setup/optimizer_ms", lambda: torch.optim.Adam(
+                model.weights_list,
+                lr=training_config.learning_rate,
+                betas=tuple(training_config.optimizer_betas),
+            ))
+            tracker = SolutionTracker(task)
+            if timing is not None:
+                timing.finish_setup()
+            if timing is not None:
                 result = timing.train(task, model, optimizer, training_config, take_step)
-                if run is not None:
-                    if timing.history:
-                        run.define_metric("timing/*", step_metric="train_step")
-                        # Replay first-step/profiling records only after measurement.
-                        for record in timing.history:
-                            run.log(record)
-                    # Keep agreed means in summaries rather than the last sample.
-                    run.summary.update(result)
                 print(json.dumps({"task": task.task_name,
                                   "configuration": config.get("experiment", {}).get(
                                       "name", Path(args.config).stem if args.config else "default"),
                                   "pass": args.benchmark_pass, "metrics": result}, indent=2))
                 return result
-            finally:
-                if run is not None:
-                    run.finish()
-        log_problem(run, task)
-        diagnostic_file = diagnostic_grids = diagnostic_predictions = None
-        diagnostic_path = None
-        if run is not None and logging_config.get("solution_diagnostics", False):
-            from compressarc.train.ranking_diagnostics import run_metadata
-            tracker.enable_diagnostics()
-            diagnostic_path = args.output_dir / f"{task.task_name}-{run.id}.ranking"
-            diagnostic_path.mkdir(parents=True, exist_ok=True)
-            metadata = run_metadata(config, task.task_name, run.id, args.config)
-            (diagnostic_path / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-            diagnostic_file = (diagnostic_path / "events.jsonl").open("w", encoding="utf-8")
-            diagnostic_grids = (diagnostic_path / "grids.jsonl").open("w", encoding="utf-8")
-            diagnostic_predictions = (diagnostic_path / "training_predictions.jsonl").open("w", encoding="utf-8")
 
-        last_metrics = None
-        try:
-            progress = tqdm(range(training_config.iterations), desc=task.task_name, leave=False)
-            for train_step in progress:
-                prediction_step = (
-                    (train_step + 1) % logging_config.prediction_every == 0
-                    or train_step == training_config.iterations - 1
-                )
-                # Correctness is evaluated every update; images keep their own cadence.
-                accuracy_step = run is not None and task.solution_hash is not None
-                diagnostic_step = getattr(tracker, "diagnostics", None) is not None
-                evaluation_step = prediction_step or accuracy_step or diagnostic_step
-                last_metrics = take_step(
-                    task, model, optimizer, train_step, training_config,
-                    return_outputs=evaluation_step,
-                )
-                progress.set_postfix(loss=f"{last_metrics['loss']:.3f}")
-                if evaluation_step:
-                    tracker.update(train_step, last_metrics["outputs"])
-                    if diagnostic_file is not None:
-                        for entry in tracker.diagnostics.unwritten_grids:
-                            diagnostic_grids.write(json.dumps(entry, allow_nan=False) + "\n")
-                        diagnostic_grids.flush()
-                        tracker.diagnostics.unwritten_grids.clear()
-                        diagnostic_file.write(json.dumps(tracker.diagnostics.last, allow_nan=False) + "\n")
-                        diagnostic_file.flush()
-                        if prediction_step:
-                            records = training_prediction_records(task, last_metrics["outputs"], tracker)
-                            last_metrics["training_prediction_records"] = records
-                            diagnostic_predictions.write(json.dumps({"train_step": train_step,
-                                "iteration": train_step + 1, "examples": records}, allow_nan=False) + "\n")
-                            diagnostic_predictions.flush()
-
-                if run is not None and (
-                    train_step % logging_config.wandb_log_every == 0 or evaluation_step
-                ):
-                    log_training_step(
-                        run, task, tracker, train_step, last_metrics,
-                        include_prediction=prediction_step, include_accuracy=accuracy_step,
-                        include_diagnostics=diagnostic_step and ((train_step + 1) % 50 == 0 or train_step == training_config.iterations - 1),
+            with TrainingDiagnostics(run, model, task) as diagnostics:
+                last_metrics = None
+                progress = tqdm(range(training_config.iterations), desc=task.task_name, leave=False)
+                for train_step in progress:
+                    diagnostics.step = train_step
+                    last_metrics = take_step(
+                        task, model, optimizer, train_step, training_config,
+                        return_outputs=True,
+                        **({"diagnostic_callback": diagnostics.observe} if run is not None else {}),
                     )
+                    progress.set_postfix(loss=f"{last_metrics['loss']:.3f}")
+                    diagnostics.after_step()
+                    tracker.update(train_step, last_metrics["outputs"])
+                    log_training_metrics(run, task, tracker, train_step, last_metrics)
 
-            if args.save_checkpoints:
-                checkpoint_path = args.output_dir / f"{task.task_name}.pt"
-                serial_metrics = {key: value for key, value in last_metrics.items() if key not in ("outputs", "kl_components", "training_prediction_records")}
-                torch.save(
-                    {
-                        "task": task.task_name,
-                        "split": training_config.split,
-                        "config": OmegaConf.to_container(config, resolve=True),
-                        "weights": [weight.detach().cpu() for weight in model.weights_list],
-                        "metrics": serial_metrics,
-                    },
-                    checkpoint_path,
-                )
-                log_model_checkpoint(
-                    run, checkpoint_path,
-                    metadata={
-                        "task_name": task.task_name,
-                        "split": training_config.split,
-                        "iterations_completed": training_config.iterations,
-                        "model": OmegaConf.to_container(config.model, resolve=True),
-                    },
-                )
+                if args.save_checkpoints or run is not None:
+                    args.output_dir.mkdir(parents=True, exist_ok=True)
+                    checkpoint_path = args.output_dir / f"{task.task_name}.pt"
+                    save_inference_checkpoint(
+                        checkpoint_path, task, model, tracker, config,
+                        training_config.iterations, last_metrics,
+                    )
+                    log_model_checkpoint(run, checkpoint_path)
 
-            if diagnostic_file is not None:
-                for handle in (diagnostic_file, diagnostic_grids, diagnostic_predictions):
-                    handle.close()
-                with (diagnostic_path / "final_candidates.jsonl").open("w", encoding="utf-8") as final_file:
-                    for entry in tracker.diagnostics.candidate_ranking(tracker):
-                        final_file.write(json.dumps(entry, allow_nan=False) + "\n")
-                log_ranking_trace(run, diagnostic_path)
-
-            if run is not None:
-                log_final_results(run, task, tracker)
-                log_latent_pca(run, model, logging_config)
-
-            print(f"{task.task_name}: loss={last_metrics['loss']:.4f}")
-            print("Guess 1:", tracker.solution_most_frequent)
-            print("Guess 2:", tracker.solution_second_most_frequent)
-            if task.solution_hash is not None:
-                print("Top-1 correct:", hash(tracker.solution_most_frequent) == task.solution_hash)
-                print("Pass@2 correct:", any(
-                    hash(guess) == task.solution_hash
-                    for guess in (tracker.solution_most_frequent, tracker.solution_second_most_frequent)
-                ))
-        finally:
-            if diagnostic_file is not None:
-                for handle in (diagnostic_file, diagnostic_grids, diagnostic_predictions):
-                    handle.close()
-            if run is not None:
-                run.finish()
+                print(f"{task.task_name}: loss={last_metrics['loss']:.4f}")
+                print("Guess 1:", tracker.solution_most_frequent)
+                print("Guess 2:", tracker.solution_second_most_frequent)
+                if task.solution_hash is not None:
+                    print("Top-1 correct:", hash(tracker.solution_most_frequent) == task.solution_hash)
+                    print("Pass@2 correct:", any(
+                        hash(guess) == task.solution_hash
+                        for guess in (tracker.solution_most_frequent, tracker.solution_second_most_frequent)
+                    ))
+                log_final_candidates(run, tracker)
+            # Release the previous task before constructing the next GPU model.
+            del model, optimizer, last_metrics
 
 
 

@@ -18,13 +18,15 @@ def mask_select_logprobs(mask, length):
 
 
 def take_step(task, model, optimizer, train_step, config=None, return_outputs=False,
-              phase_callback=None):
+              phase_callback=None, diagnostic_callback=None):
     """Compute the ARC objective, update model weights, and return scalar metrics."""
     config = config if config is not None else load_config().training
     optimizer.zero_grad()
     if phase_callback is not None:
         phase_callback("forward")
     logits, x_mask, y_mask, kl_amounts, kl_names = model.forward()
+    if diagnostic_callback is not None:
+        diagnostic_callback("outputs", (logits, x_mask, y_mask, *kl_amounts))
     if phase_callback is not None:
         phase_callback("loss")
     logits = torch.cat([torch.zeros_like(logits[:, :1, :, :]), logits], dim=1)
@@ -119,10 +121,16 @@ def take_step(task, model, optimizer, train_step, config=None, return_outputs=Fa
     loss = config.kl_weight * total_kl + config.reconstruction_weight * reconstruction_error
     if phase_callback is not None:
         phase_callback("backward")
+    if diagnostic_callback is not None:
+        diagnostic_callback("loss", (loss, total_kl, reconstruction_error))
     loss.backward()
     if phase_callback is not None:
         phase_callback("optimizer")
+    if diagnostic_callback is not None:
+        diagnostic_callback("gradients", (p.grad for p in model.weights_list))
     optimizer.step()
+    if diagnostic_callback is not None:
+        diagnostic_callback("parameters", model.weights_list)
 
     if phase_callback is not None:
         phase_callback("metrics")

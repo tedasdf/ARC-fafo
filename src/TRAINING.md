@@ -1,203 +1,166 @@
 # Training
 
-Install the shared training dependencies from the repository root:
+Install dependencies from the repository root:
 
-~~~powershell
+```bash
 python -m pip install -r src/requirements.txt
-~~~
+```
 
-The standard trainer, Modal image, and scoring defaults use files under `src`. The deferred `compressarc.analysis.solve_task` worker still needs the legacy folder.
+Train one task, or omit `--task` to train the configured split:
 
-From the repository root, run the standard trainer locally:
+```bash
+python src/train.py --task 50cb2852 --set training.iterations=1500
+```
 
-~~~powershell
-python src/train.py --task <task-id> --set training.iterations=500
-~~~
+Defaults live in `src/config/default.yaml`. Use `--config <yaml>` and repeat
+`--set KEY=VALUE` to override them. Select strict or relaxed preprocessing with
+`model.multitensor_constraints`.
 
-Omit --task to train every task in the configured split. The defaults are in src/config/default.yaml; use --config for another YAML file and repeat --set KEY=VALUE for one-off overrides.
+The solution tracker updates every optimizer step. Console output shows progress,
+final loss, both guesses, and correctness when reference solutions are available.
+W&B logs `train/reconstruction_error` (unweighted reconstruction CE objective)
+and `train/total_KL` every step, plus `predictions/top_1_correct` and
+`predictions/pass_2_correct` when reference answers exist.
 
-## Run on Modal
+The solution tracker updates every step. Every 50 updates, W&B logs `candidates/cumulative_unique_count`,
+`candidates/cumulative_correct_count`, `candidates/best_correct_rank`,
+`candidates/best_correct_score`, and `candidates/top_ranked_score`.
+Correctness fields require reference answers. Before a correct candidate exists,
+its rank and score are null (not zero). These rank and score fields use the current ranking at each logged step, not
+historical best values. A correct candidate can fall from rank 1 to rank 2 or
+lower. Rank 1 is the highest accumulated
+selection score; equal scores follow first appearance. Candidates are exact
+full tuples of test-output grids, deduplicated across the run. Correct candidate
+count therefore normally stays at 0 or 1 for a task with one accepted answer.
 
-Install the Modal CLI in the local Python environment and authenticate once:
+`candidates/first_correct_generation_step` is stored in the summary immediately
+on first generation, using 1-based steps. If never generated, it is absent.
+At normal completion, `candidates/all_unique` contains one row per unique output
+hash with exactly four columns: `hash`, `first_step` (1-based), `occurrences`,
+and `is_correct` (exact match, null when reference unavailable). Occurrences
+count a candidate at most once per step when raw and EMA agree, and count
+reappearances on later steps. Final candidate metrics remain in the summary.
 
-~~~powershell
+```bash
+wandb login
+python src/train.py --task 50cb2852 --set logging.wandb=true --set logging.wandb_entity=arc_agi
+```
+
+The default project is `compressarc`. Configure the account, project and mode with
+`logging.wandb_entity`, `logging.wandb_project` and `logging.wandb_mode`.
+Logging is disabled by default.
+
+## Local checkpoints
+
+```bash
+python src/train.py --task 50cb2852 --save-checkpoints --output-dir outputs/training
+```
+
+This saves final weights, model configuration, task information, and scalar
+metrics in a local `.pt` file. It is a final model snapshot, not a resumable
+optimizer checkpoint.
+
+## Modal
+
+Install and authenticate Modal, then use the same trainer:
+
+```bash
 pip install modal
 modal setup
-~~~
+python src/train.py --backend modal --task 50cb2852 --save-checkpoints
+```
 
-Then use the same trainer and config with the Modal backend:
+The default GPU is T4; select another with `--modal-gpu`. Saved checkpoints are
+returned to the local output directory. When W&B is enabled, configure a Modal
+secret named `wandb-secret` containing `WANDB_API_KEY`.
 
-~~~powershell
-python src/train.py --backend modal --task <task-id> --set training.iterations=500
-~~~
+## Benchmarks
 
-Omit --task to run the full configured split remotely. Modal uses a T4 GPU by default; choose another supported GPU with --modal-gpu, for example --modal-gpu A100.
+```bash
+python src/train.py --mode benchmark --task 694f12f3 --benchmark-pass clean
+python src/train.py --mode benchmark --task 694f12f3 --benchmark-pass operations
+```
 
-To save checkpoints, add --save-checkpoints. The remote run returns checkpoint files to the local --output-dir (default: outputs/training).
+Both passes use the existing model, objective, and optimizer. Clean reports setup,
+complete-step timing and memory; operations profiles phases. Results print as JSON
+to the console. Defaults are 10 warmup and 30 measured updates. Benchmark mode does
+not save model checkpoints.
 
-Use model.multitensor_constraints=strict (the default) or model.multitensor_constraints=relaxed to select the preprocessing policy. When W&B is enabled in the config, the Modal run expects a Modal secret named wandb-secret containing WANDB_API_KEY:
-
-~~~powershell
-modal secret create wandb-secret WANDB_API_KEY=<your-wandb-api-key>
-~~~
-
-The Modal backend runs the resolved configuration remotely; local execution remains the default.
-
-## Timing through the existing trainer
-
-Run the thin launcher from the repository root on your single GPU:
+The batch launcher supports configured variants and task sharding:
 
 ```bash
 python src/run_training_timing.py --set training.device=cuda:0
+python src/run_training_timing.py --mode train --save-checkpoints
 ```
 
-It calls `train.main` for the five real tasks listed in the launcher and each of the five model YAMLs in `src/config/models`. Pass the same exploratory YAML
-with `--config`; standard `--set` overrides also work. Model initialization,
-actual task preprocessing, loss, and Adam update are the existing trainer code.
+Use `--help` on the trainer or launcher for configuration and sharding options.
 
-Every task/configuration gets two fresh, equally seeded passes and two W&B runs:
+## Per-run summaries
 
-- **clean**: wall-timed setup, first step, 10 warmup updates (including the first),
-  then a synchronized block of 30 complete updates. Only this pass reports
-  complete-step timing and peak memory. Peaks reset immediately before the block.
-- **operations**: the same initialization and 10 + 30 updates, with CUDA events
-  around forward, loss, backward, optimizer, and metric transfers. Gradient
-  clearing remains inside complete updates without its own metric. Profiling
-  results do not need to sum to clean block wall time.
+With W&B enabled, each task records `run/wall_clock_seconds`, `run/status`
+(`running`, `finished`, `failed`, or `interrupted`), and on CUDA,
+`run/peak_gpu_allocated_mib` and `run/peak_gpu_reserved_mib`.
+Wall time covers model/optimizer setup, training, tracking and local checkpoint
+saving; it excludes dataset loading, W&B initialization and final upload/finish.
+GPU peaks reset before constructing each task model. They measure PyTorch-managed
+allocations/reservations, not total device memory. CPU runs omit GPU fields.
+Caught failures finish W&B with a nonzero exit code. Forced termination cannot
+write final summaries and is reflected by W&B's own run state.
 
-Thus the default is 40 updates per pass, 80 per task/configuration, 50 W&B runs total.
-W&B initialization and summary writes happen outside timed regions. Benchmark
-mode skips predictions/images, PCA, progress updates, and checkpoints; scalar
-transfers already inside `take_step` remain included. The loss-phase KL-component
-transfers and final metric/output transfers are assigned distinct boundaries.
-Metrics use the definitions in `training_metrics_spec.py`. The operation pass
-buffers one timing record per measured step, then replays them in step order
-to W&B after the timed pass. Charts use `train_step` (10-39 by default); run
-summaries retain measured means. Clean setup, block time, and memory peaks
-remain summary metrics. The clean run also records `timing/first_step_ms` at
-`train_step=0` in history, buffered until measurement finishes. Task/model
-settings remain in the existing W&B config.
+## Kernel and numerical diagnostics
 
-For one task/variant or a different measured block:
+With W&B enabled, trainable directional cores are monitored individually by
+layer type, depth and parameter name (including the direction-share `theta`).
+Primitive-only paths have no trainable core kernels and omit these measurements.
+The parameter tensor count is stored as `kernels/parameter_tensor_count`.
 
-```bash
-python src/run_training_timing.py --task 694f12f3 --config src/config/models/all_projected.yaml --measured-iterations 50
+Every 50 updates (50, 100, ...), collection and logging include:
+- `kernels/<layer>/depth_<n>/<parameter>/distance_from_initialization`: absolute L2 distance to the initialization snapshot.
+- `kernels/<layer>/depth_<n>/<parameter>/gradient_norm`: L2 gradient norm after backward, before Adam. Missing gradients are null.
+- `kernels/<layer>/depth_<n>/<parameter>/parameter_norm`: L2 parameter norm after Adam.
+
+Every training update checks raw model outputs and KL contributions, loss terms,
+all available parameter gradients before Adam, and all parameters after Adam.
+Nonfinite events emit `numerics/phase`, `numerics/nan_count` and
+`numerics/inf_count` with `train_step`. Finite observations emit no event.
+Final summaries always include `numerics/nonfinite_detected`, `nan_detected`,
+`inf_detected`, `nonfinite_event_count`, and `nonfinite_step_count` under the
+`numerics/` prefix. `first_nonfinite_step` is 1-based and present only if detected.
+Event counts count observed phases, so the same nonfinite value propagated
+through several phases can generate multiple events in one step. Checks are
+observational; they do not skip optimizer updates or sanitize values.
+
+## Final model upload
+
+Each completed training run with W&B enabled automatically saves a final `.pt`
+checkpoint under `--output-dir` and attaches it as a W&B artifact of type `model`,
+named `model-<run-id>` with aliases `final` and `latest`. No `--save-checkpoints`
+flag is needed for W&B runs; that flag still controls local-only runs.
+The versioned inference file contains final parameter values and layer buffers,
+model configuration, task inputs/training examples, color/shape metadata,
+training seed/iteration count, scalar losses, and Python/NumPy/PyTorch runtime
+versions. Selection state includes its EMA tensors, candidate scores and records,
+selected guesses, first-correct step, EMA decay, uncertainty weight, early-step
+penalty/cutoff, EMA penalty, and tie/crop rules. CPU/CUDA Torch, NumPy and Python
+RNG states are included because decoder inference is stochastic.
+
+Logging configuration, credentials and optimizer state are excluded. This is an
+inference checkpoint, not a resumable training checkpoint. Benchmark mode does
+not upload a final model. Bitwise inference reproduction is tested on the same
+CPU/runtime; CUDA kernels and different hardware/software can differ.
+
+```python
+from compressarc.train.checkpoint import load_inference_checkpoint
+
+saved = load_inference_checkpoint("outputs/training/50cb2852.pt", device="cpu")
+print(saved.tracker.solution_most_frequent)  # Original selected final guess.
+print(saved.tracker.solution_second_most_frequent)
+# saved.model.forward() reproduces the next sampled model forward on the same
+# runtime/device, from the RNG state saved after training.
 ```
 
-Use `--clean-only` to skip profiling. CPU smoke runs use host-clock operation
-spans and omit GPU memory; their W&B config identifies the CPU method. They do
-not provide GPU timing validation. To avoid contacting W&B during a smoke run,
-pass `--set logging.wandb=false`. Normal `train.py` defaults to `--mode train`.
-The benchmark flag can also be invoked directly for a single pass:
+The saved model weights are after the final optimizer update; the stored selected
+guesses include the last forward pass made before that update. These are distinct
+states, both retained. Use the same code/backend implementation as the saved
+configuration, with `src` importable, to reconstruct the model.
 
-```bash
-python src/train.py --mode benchmark --task 694f12f3 --benchmark-pass clean --set logging.wandb=true
-```
-
-
-## Model YAMLs for timing and exploratory runs
-
-| YAML in src/config/models | Shift | Direction-share | Cummax |
-|---|---|---|---|
-| original.yaml | primitives | primitives | primitives |
-| projected_shift.yaml | tied_conv | primitives | primitives |
-| projected_direction_share.yaml | primitives | d4 | primitives |
-| projected_cummax_lse.yaml | primitives | primitives | optimised LSE |
-| all_projected.yaml | tied_conv | d4 | optimised LSE |
-
-Each YAML inherits other model and training settings from `config/default.yaml`.
-The projected D4 implementation migrates the pilot's
-`x + W2 D4(W1 normalize(x))`, using 8-channel projections, XY symmetrization,
-and one 10-orbit D4 mixer per depth. Legacy directional pair weights consume
-their original initialization sequence but are removed from the optimizer.
-The `d4` factory selection uses this projected wrapper in
-`direction_share/morphological.py`; there is no separate projected implementation file.
-
-The launcher no longer has a variant flag or silently overrides model choices.
-Pass `--config` repeatedly to choose several YAMLs; omit it to run all five.
-Explicit `--set` overrides still apply. W&B records each configuration name,
-source YAML, and the actual resolved model settings. Use the same YAML for pilots:
-
-```bash
-python src/train.py --config src/config/models/all_projected.yaml --task 694f12f3 --set logging.wandb=true
-```
-
-These preserve the migrated layer architecture; pilot training settings such as
-seed 42, training length, and early stopping are not implicitly imported. Set
-those explicitly if needed. The LSE YAML uses the optimized PyTorch LSE backend.
-
-
-## Explicit optimisation and Triton cummax configs
-
-`projected_cummax_optimisation.yaml` selects the same optimized PyTorch backend
-as the existing `projected_cummax_lse.yaml`. `projected_cummax_triton.yaml` selects
-a full LSE wrapper with Triton cardinal and diagonal forward/backward. Both replace only cummax and preserve projections/masks/residuals.
-They are additional explicit configs; the launcher's original five defaults
-are unchanged.
-
-```bash
-python src/run_training_timing.py --config src/config/models/projected_cummax_optimisation.yaml --config src/config/models/projected_cummax_triton.yaml --set training.device=cuda:0
-```
-
-Triton requires Linux CUDA and float32. Install `src/requirements.txt` on the L4
-and verify the GPU parity tests before comparing performance:
-
-```bash
-cd src
-python -m pytest tests/correctness/layers/lse/test_triton_lse.py -q
-```
-
-Both canonical scans use Triton; direction rotations, projections, masking,
-and residual operations remain standard PyTorch wrapper logic. Optional imports
-are lazy so ordinary CPU/PyTorch runs do not require Triton.
-
-
-## Comparing tied-convolution implementations
-
-The existing `projected_shift.yaml` uses grouped PyTorch `conv2d`.
-`projected_shift_unfold.yaml` uses explicit `F.unfold` and weighted patch
-multiplication. `projected_shift_triton.yaml` uses a direct 3x3 depthwise Triton
-kernel and input/filter backward kernels. All retain the same two canonical
-learned 3x3 kernels, direction rotations, parameter/state-dict layout, masks,
-projections, normalization and residuals. No matrix fusion changes the model.
-
-```bash
-python src/run_training_timing.py --config src/config/models/projected_shift.yaml --config src/config/models/projected_shift_unfold.yaml --config src/config/models/projected_shift_triton.yaml --set training.device=cuda:0
-```
-
-These explicit configs do not change the launcher's five defaults. Verify the
-optional GPU kernel before comparing full-step timings, from `src`:
-
-```bash
-python -m pytest tests/correctness/layers/shift/test_shift.py -q
-```
-
-## Full training on the original eight pilot tasks
-
-The final_pilot_8.yaml config selects conv2d projected shift, projected D4,
-and Triton cardinal/diagonal LSE. It declares the original eight task IDs,
-1500 updates per task, seed 42, and strict constraints. Other model and
-optimizer defaults stay shared. Full training uses the existing trainer and
-W&B training metrics/predictions rather than clean/profile benchmark passes.
-
-From the repository root on the L4:
-
-```bash
-python src/run_training_timing.py --mode train --config src/config/models/final_pilot_8.yaml
-```
-
-Add --dry-run to inspect all eight planned calls without training. The launcher
-reads experiment.task_ids when --task is omitted; explicit --task selections
-still take precedence. Benchmark mode remains the launcher default. The pilot
-run is fixed at 1500 updates per task; legacy early stopping is not enabled.
-Each task gets a fresh model/optimizer and seed 42, trained sequentially on
-cuda:0, with a separate W&B run in arc_agi/compressarc.
-
-## M3 Slurm task parallelism
-
-See [the Slurm guide](slurm/README.md) to train independent task models with the two corrected pilot variants using a 16-element GPU job array.
-## Reference answers and training predictions in W&B
-
-At run start, `puzzle/reference_outputs` records all training reference outputs and any available test reference answers, with images, original color-valued grids and dimensions. Full test references are preserved even when the model's padded canvas is smaller; this is diagnostic logging only.
-
-At `logging.prediction_every` (default every 10 updates) and the final update, `train/predictions` records each training example's expected output, current predicted output, exact-match flag and both raw grids. Predictions use output-mode logits and mask-selected crops of the known training output shape. These are current forward samples, rather than the tracked test guesses. `predictions/solutions` remains the two tracked test guesses, and top-1/pass@2 are still logged each iteration.

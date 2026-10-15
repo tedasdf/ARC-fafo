@@ -25,9 +25,3 @@ training:
   iterations: 1500
   seed: 0
   device: cuda:0
-logging:
-  wandb: true
-  wandb_project: compressarc
-  wandb_entity: arc_agi
-  wandb_tags: [pilot8, full-training, seed0, hard-cummax]
-  latent_pca: false

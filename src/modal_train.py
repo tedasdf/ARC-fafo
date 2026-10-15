@@ -86,13 +86,7 @@ def main(
     config = yaml.safe_load(base64.b64decode(config_yaml_b64))
     secrets = []
     if config.get("logging", {}).get("wandb", False):
-        secrets.append(
-            modal.Secret.from_name(
-                "wandb-secret",
-                required_keys=["WANDB_API_KEY"],
-            )
-        )
-
+        secrets.append(modal.Secret.from_name("wandb-secret", required_keys=["WANDB_API_KEY"]))
     checkpoint_files = run_training.with_options(
         gpu=gpu,
         secrets=secrets,

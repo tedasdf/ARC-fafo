@@ -18,12 +18,3 @@ training:
   iterations: 1500
   seed: 0
   device: cuda:0
-logging:
-  wandb: true
-  wandb_project: compressarc
-  wandb_entity: arc_agi
-  wandb_tags: [pilot8, full-training, seed0, hard-cummax, corrected, m3-slurm, guess-diagnostics]
-  latent_pca: false
-  wandb_log_every: 1
-  prediction_every: 10
-  solution_diagnostics: true

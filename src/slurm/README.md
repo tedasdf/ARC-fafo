@@ -18,7 +18,6 @@ module load miniforge3
 mamba activate SymARC
 python --version
 python -m pip install -r src/requirements.txt
-wandb login
 sbatch src/slurm/pilot_variants.sbatch
 ```
 

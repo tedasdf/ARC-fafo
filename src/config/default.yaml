@@ -33,17 +33,9 @@ training:
   marginal_annealing_start: 0.1
   annealing_steps: 100
 
+
 logging:
   wandb: false
   wandb_project: compressarc
   wandb_entity: null
   wandb_mode: online
-  wandb_log_every: 1
-  prediction_every: 10
-  solution_diagnostics: false
-  wandb_tags: []
-  latent_pca: false
-  pca_samples: 100
-  pca_kl_threshold: 1.0
-  pca_components: 3
-  pca_max_panels: 24
