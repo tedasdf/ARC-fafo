@@ -36,6 +36,6 @@ training:
 
 logging:
   wandb: false
-  wandb_project: compressarc
+  wandb_project: compressarc-final-ablation
   wandb_entity: null
   wandb_mode: online

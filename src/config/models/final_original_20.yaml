@@ -33,9 +33,14 @@ training:
   annealing_steps: 100
 logging:
   wandb: true
-  wandb_project: compressarc
+  wandb_project: compressarc-final-ablation
   wandb_entity: arc_agi
   wandb_mode: online
+  wandb_tags:
+  - final-ablation
+  - sample20
+  - steps1500
+  - strict
 experiment:
   name: original_sample20
   task_ids:
@@ -64,3 +69,4 @@ experiment:
   - 0
   - 1
   - 2
+  variant: original

@@ -18,6 +18,8 @@ def test_final_configs_change_only_one_model_setting_and_share_all_controls():
     configs=[load_config(SRC/"config/models"/(name+".yaml")) for name in NAMES]
     baseline=OmegaConf.to_container(configs[0],resolve=True)
     assert len(set(baseline["experiment"]["task_ids"]))==20
+    assert baseline["logging"]["wandb_project"]=="compressarc-final-ablation"
+    assert baseline["logging"]["wandb_entity"]=="arc_agi"
     assert baseline["training"]["iterations"]==1500
     assert baseline["training"]["seed"]==0
     assert baseline["experiment"]["task_sample_seed"]==42
@@ -107,3 +109,22 @@ def test_each_final_variant_can_take_a_finite_training_step(name):
     for kind in ("shift","direction_share","cummax"):
         for core in getattr(getattr(model,kind),"models",()):
             assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in core.parameters())
+
+
+@pytest.mark.parametrize("name,variant",list(zip(NAMES,["original","projected-conv","projected-d4","projected-lse"])))
+def test_wandb_tags_identify_experiment_variant_and_seed(monkeypatch,name,variant):
+    import sys
+    from types import SimpleNamespace
+    from compressarc.train.logging import initialize_wandb
+    config=load_config(SRC/"config/models"/(name+".yaml"))
+    calls=[]
+    run=SimpleNamespace(define_metric=lambda *a,**k:None)
+    def initialize(**kwargs):
+        calls.append(kwargs)
+        return run
+    monkeypatch.setitem(sys.modules,"wandb",SimpleNamespace(init=initialize,Settings=lambda **k:k))
+    for seed in (0,1,2):
+        config.training.seed=seed
+        initialize_wandb(config,SimpleNamespace(task_name="74dd1130"))
+        assert set(calls[-1]["tags"])=={"arc-agi","training","final-ablation","sample20","steps1500","strict",f"seed{seed}",variant}
+        assert calls[-1]["name"].endswith(f"-seed{seed}")

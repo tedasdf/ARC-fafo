@@ -31,7 +31,7 @@ Run when ready:
 python src/run_training_timing.py --mode train --set training.device=cuda:0
 ```
 
-W&B is enabled in these four configs, targeting `arc_agi/compressarc`.
+W&B is enabled in these four configs, targeting `arc_agi/compressarc-final-ablation`.
 Run names identify the variant and training seed. Metrics, candidate tables, kernel/numerical
 checks and final inference model artifacts use the current shared trainer.
 Checkpoints are separated under `outputs/training/<config-name>/seed_<seed>/`.
@@ -70,6 +70,13 @@ model initialization and stochastic training independently on the same tasks.
 
 ## Slurm on L4
 
-Four per-variant arrays are ready under `src/slurm/final_*_20.sbatch`.
+Four task-group arrays are ready under `src/slurm/final_tasks_*.sbatch`.
+Each owns five tasks and runs all four variants and three seeds for those tasks.
 See [submission instructions](slurm/FINAL_L4.md). Each has 60 elements, one
 GPU per active element and one active element per array by default.
+
+## W&B tags
+
+Shared tags: `arc-agi`, `training`, `final-ablation`, `sample20`, `steps1500`,
+`strict`. Each run also has `seed0`, `seed1` or `seed2`, and one variant tag:
+`original`, `projected-conv`, `projected-d4` or `projected-lse`.

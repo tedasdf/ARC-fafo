@@ -1,5 +1,5 @@
 #!/bin/bash -l
-#SBATCH --job-name=arc-projected_d4
+#SBATCH --job-name=arc-tasks_01
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:L4:1
 #SBATCH --ntasks=1
@@ -7,8 +7,8 @@
 #SBATCH --mem=16G
 #SBATCH --time=04:00:00
 #SBATCH --array=0-59%1
-#SBATCH --output=slurm-projected_d4-%A_%a.out
-#SBATCH --error=slurm-projected_d4-%A_%a.err
+#SBATCH --output=slurm-tasks_01-%A_%a.out
+#SBATCH --error=slurm-tasks_01-%A_%a.err
 
 set -euo pipefail
 # Interactive allocations can retain a stale SLURM_SUBMIT_DIR.
@@ -38,10 +38,19 @@ PYTHON_BIN="$(command -v python)"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 export PYTHONUNBUFFERED=1
-OUTPUT_ROOT="${ARC_OUTPUT_ROOT:-outputs/final_ablation/projected_d4/${SLURM_ARRAY_JOB_ID}}"
+TASKS=("3eda0437" "0dfd9992" "95990924" "7f4411dc" "6f8cd79b")
+TASK_ARGS=()
+for task in "${TASKS[@]}"; do
+    TASK_ARGS+=(--task "$task")
+done
+OUTPUT_ROOT="${ARC_OUTPUT_ROOT:-outputs/final_ablation/tasks_01/${SLURM_ARRAY_JOB_ID}}"
 "$PYTHON_BIN" -c 'import sys, torch; print(sys.executable, torch.__version__); assert torch.cuda.is_available(), "No CUDA GPU visible"; print(torch.cuda.get_device_name(0))'
 srun "$PYTHON_BIN" src/run_training_timing.py --mode train \
+    --config src/config/models/final_original_20.yaml \
+    --config src/config/models/final_projected_conv_20.yaml \
     --config src/config/models/final_projected_d4_20.yaml \
+    --config src/config/models/final_projected_lse_20.yaml \
+    "${TASK_ARGS[@]}" \
     --shard-count 60 --shard-index "${SLURM_ARRAY_TASK_ID}" \
     --set training.device=cuda:0 \
     --save-checkpoints --output-dir "$OUTPUT_ROOT"

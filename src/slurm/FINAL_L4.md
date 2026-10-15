@@ -1,54 +1,51 @@
-# Four final L4 Slurm arrays
+# Four task-group L4 Slurm arrays
 
-Submit from the ARC-fafo repository root after copying/synchronizing the current
-`src` code, configs and scripts to the cluster. These scripts use the existing
-`miniforge3` module and `SymARC` environment. Install `src/requirements.txt` in
-that environment and authenticate with `wandb login` once.
-
-```bash
-module load miniforge3
-mamba activate SymARC
-python -m pip install -r src/requirements.txt
-wandb login
-sbatch src/slurm/final_original_20.sbatch
-sbatch src/slurm/final_projected_conv_20.sbatch
-sbatch src/slurm/final_projected_d4_20.sbatch
-sbatch src/slurm/final_projected_lse_20.sbatch
-```
-
-Each file is one job array with 60 elements: 20 tasks x seeds 0, 1, 2. Each element
-runs exactly one independent 1,500-step model. Index `3*t + s` selects task index
-`t` in the config and seed index `s`. All four arrays together cover 240 runs.
-`--array=0-59%1` permits one active GPU per array, so the four submissions permit
-up to four active GPUs. Scheduling and your allocation determine availability.
-
-Resources per element: `gpu` partition, `gpu:L4:1`, 4 CPUs, 16 GB RAM, 4 hours.
-The L4 GRES spelling must match your cluster. Inspect your available GRES with
-`sinfo -p gpu -o '%N %G'` and override with your actual token if needed, for
-example `sbatch --gres=gpu:l4:1 src/slurm/final_original_20.sbatch`.
-Supply your account/QoS flags on `sbatch` if your allocation requires them.
-Scripts have LF line endings. No jobs have been submitted locally.
-
-Logs use `slurm-<variant>-<array-job-id>_<index>.out` / `.err` at the repo root.
-Final local models are under
-`outputs/final_ablation/<variant>/<array-job-id>/<config-name>/seed_<seed>/<task>.pt`.
-W&B is `arc_agi/compressarc`; names distinguish task, variant and seed. Each
-completed run uploads its inference model artifact and final candidate table.
-
-To retry failed elements, retain original indices, e.g.
-`sbatch --array=5,17 src/slurm/final_projected_lse_20.sbatch`.
-A resubmission starts fresh runs; checkpoints do not resume optimizer state.
-
-Preview a single array element without submitting or using a GPU:
+Submit from the updated ARC-fafo repository root. The scripts use the existing
+`miniforge3` module and `SymARC` environment; install `src/requirements.txt` and
+log into W&B once before submitting.
 
 ```bash
-python src/run_training_timing.py --mode train --dry-run \
-  --config src/config/models/final_original_20.yaml \
-  --shard-count 60 --shard-index 0
+sbatch src/slurm/final_tasks_01.sbatch
+sbatch src/slurm/final_tasks_02.sbatch
+sbatch src/slurm/final_tasks_03.sbatch
+sbatch src/slurm/final_tasks_04.sbatch
 ```
 
-Use `squeue -u "$USER"` to monitor queues and
-`sacct -j ARRAY_JOB_ID --format=JobID,State,ExitCode` for completed elements.
+Each array owns five distinct tasks and covers all four variants and three
+seeds for each task: 5 x 4 x 3 = 60 elements. Across the four arrays: 240 models.
+Each element trains one independent 1,500-update model, retaining the four-hour
+limit. `--array=0-59%1` allows one active GPU per array (up to four across the
+four submissions). Array index = 12 * local_task_index + 3 * variant_index + seed_index.
+Variant order: original, projected convolution, projected D4, projected LSE.
+Seeds: 0, 1, 2. The experiment and metric definitions are unchanged.
+
+| Script | Task IDs |
+|---|---|
+| `final_tasks_01.sbatch` | `3eda0437`, `0dfd9992`, `95990924`, `7f4411dc`, `6f8cd79b` |
+| `final_tasks_02.sbatch` | `445eab21`, `3bdb4ada`, `36fdfd69`, `d43fd935`, `1c786137` |
+| `final_tasks_03.sbatch` | `1bfc4729`, `3aa6fb7a`, `6cdd2623`, `74dd1130`, `f8c80d96` |
+| `final_tasks_04.sbatch` | `623ea044`, `d406998b`, `6d75e8bb`, `d9fac9be`, `97999447` |
+
+Each element requests `--partition=gpu --gres=gpu:L4:1`, four CPUs and 16 GB RAM.
+Use your cluster's actual GRES token and account/QoS flags if different.
+For available GPU names: `sinfo -p gpu -o '%N %G'`.
+
+Logs: `slurm-tasks_<group>-<array-job-id>_<index>.out` / `.err`.
+Checkpoints:
+`outputs/final_ablation/tasks_<group>/<array-job-id>/<config-name>/seed_<seed>/<task>.pt`.
+W&B project: `arc_agi/compressarc-final-ablation`; task, variant and seed remain
+in run names/tags. Final model uploads and candidate tables remain enabled.
+
+To retry only failed elements, keep their original indices, for example:
+`sbatch --array=5,17 src/slurm/final_tasks_01.sbatch`.
+Resubmissions start fresh runs, not optimizer-state resumes.
+
+The previous per-variant array files have been replaced by these task-group
+files. Do not also submit old downloaded per-variant scripts; they would
+repeat the same experiment. No jobs have been submitted by these changes.
+
+Monitor with `squeue -u "$USER"` and
+`sacct -j ARRAY_JOB_ID --format=JobID,State,ExitCode`.
 
 ## Zero-step smoke test
 
@@ -81,3 +78,22 @@ or using GPUs, run `bash src/slurm/test_zero_steps.sh --check-root`.
 
 The smoke test sets PyTorch's global default device explicitly and verifies
 that task tensors, parameters and buffers are on the chosen device before forward.
+
+## Run one task/variant/seed first
+
+```bash
+sbatch src/slurm/final_single.sbatch
+```
+
+Defaults: task `74dd1130`, original control, seed 0, 1,500 updates, one L4.
+This is a real training run with normal W&B logging and final model upload.
+No array or seed sweep is used. Override its three positional arguments:
+
+```bash
+sbatch src/slurm/final_single.sbatch 74dd1130 projected-conv 0
+```
+
+Variants: `original`, `projected-conv`, `projected-d4`, `projected-lse`.
+Checkpoints use `outputs/final_single/<job-id>/<config-name>/seed_<seed>/`.
+This pilot is additional to the 240-run arrays; submitting all arrays later
+will repeat its task/variant/seed combination.

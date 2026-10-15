@@ -13,9 +13,14 @@ def initialize_wandb(config, task):
     variant = config.get("experiment", {}).get("name")
     run_name = f"{task.task_name}-{config.training.split}" + (f"-{variant}" if variant else "")
     run_name += f"-seed{config.training.seed}"
+    tags = ["arc-agi", config.training.split,
+            *list(options.get("wandb_tags", [])), f"seed{config.training.seed}"]
+    variant_tag = config.get("experiment", {}).get("variant")
+    if variant_tag:
+        tags.append(variant_tag)
     run = wandb.init(
         project=options.wandb_project, entity=options.wandb_entity,
-        mode=options.wandb_mode, name=run_name,
+        mode=options.wandb_mode, name=run_name, tags=list(dict.fromkeys(tags)),
         settings=wandb.Settings(disable_git=True, disable_code=True, x_disable_stats=True, console="off"),
     )
     run.define_metric("train_step")
