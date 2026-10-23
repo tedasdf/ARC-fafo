@@ -4,15 +4,15 @@ import base64
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import modal
 
 
 SRC_ROOT = Path(__file__).resolve().parent
 
-REMOTE_SRC_ROOT = Path("/root/compressarc/src")
-REMOTE_OUTPUT_ROOT = Path("/tmp/compressarc-checkpoints")
+REMOTE_SRC_ROOT = PurePosixPath("/root/compressarc/src")
+REMOTE_OUTPUT_ROOT = PurePosixPath("/tmp/compressarc-checkpoints")
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -68,7 +68,7 @@ def run_training(config_yaml_b64: str, task: str, save_checkpoints: bool):
 
     return [
         (path.name, path.read_bytes())
-        for path in sorted(REMOTE_OUTPUT_ROOT.glob("*.pt"))
+        for path in sorted(Path(REMOTE_OUTPUT_ROOT).glob("*.pt"))
     ]
 
 
