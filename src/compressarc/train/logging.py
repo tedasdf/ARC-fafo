@@ -15,6 +15,10 @@ def initialize_wandb(config, task):
     run_name += f"-seed{config.training.seed}"
     tags = ["arc-agi", config.training.split,
             *list(options.get("wandb_tags", [])), f"seed{config.training.seed}"]
+    if config.get("model", {}).get("shift_implementation") in ("tied_conv", "c4_tied_conv", "unfold", "triton"):
+        tags.append("C4")
+    if config.get("model", {}).get("shift_implementation") == "d4_tied_conv":
+        tags.append("D4-conv")
     variant_tag = config.get("experiment", {}).get("variant")
     if variant_tag:
         tags.append(variant_tag)

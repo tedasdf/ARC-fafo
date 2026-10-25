@@ -7,6 +7,7 @@ from ..layers.cummax.optimisation import MorphologicalMax as OptimisedMax
 from ..layers.shift.primitives import ShiftPrimitives
 from ..layers.shift.layer import TiedShiftLayer
 from ..layers.shift.morphological import UnfoldTiedDirectionalConv
+from ..layers.shift.D4_morphological import D4DirectionalConv
 from ..layers.cummax.layer import LSELayer
 from ..layers.cummax.primitives import CummaxPrimitives
 from ..layers.direction_share.primitives import DirectionSharePrimitives
@@ -46,7 +47,9 @@ class LayerFactory:
     def __init__(self):
         self._implementations = {
             "shift": {
-                "primitives": ShiftPrimitives, "tied_conv": TiedShiftLayer,
+                "primitives": ShiftPrimitives, "c4_tied_conv": TiedShiftLayer,
+                "d4_tied_conv": partial(TiedShiftLayer, model_type=D4DirectionalConv),
+                "tied_conv": TiedShiftLayer,  # Legacy spelling: same C4 implementation.
                 "unfold": partial(TiedShiftLayer, model_type=UnfoldTiedDirectionalConv),
                 "triton": create_triton_shift,
             },

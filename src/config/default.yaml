@@ -10,7 +10,8 @@ model:
   cummax_dim: 4
   shift_dim: 4
   nonlinear_dim: 16
-  # shift: primitives | tied_conv | unfold | triton (all replacements projected)
+  # shift: primitives | c4_tied_conv | d4_tied_conv | tied_conv (legacy C4 alias) | unfold | triton
+  # C4 conv/unfold/Triton enforce rotations; d4_tied_conv also enforces reflections.
   shift_implementation: primitives
   # cummax: primitives | d4 (reference LSE) | optimised | triton (GPU axis + diagonal)
   cummax_implementation: primitives

@@ -4,7 +4,8 @@ import torch.nn as nn
 
 import torch.nn.functional as F
 
-class TiedDirectionalConv(nn.Module):
+class C4DirectionalConv(nn.Module):
+    """Rotation-tied directional convolution; learned reflections are not constrained."""
     def __init__(self):
         super().__init__()
 
@@ -23,7 +24,7 @@ class TiedDirectionalConv(nn.Module):
         ]))
 
     def directional_kernels(self):
-        """Expand the two learned canonical kernels into their rotated D4 orbits."""
+        """Expand the two learned canonical kernels into their rotated C4 orbits."""
         # --------------------------------
         # Cardinal orbit
         # --------------------------------
@@ -79,7 +80,7 @@ class TiedDirectionalConv(nn.Module):
         ])                          # [4, 3, 3]
 
         # --------------------------------
-        # Two D4 orbits
+        # Two C4 orbits
         # --------------------------------
         kernels = torch.stack([
             cardinal,
@@ -114,7 +115,12 @@ class TiedDirectionalConv(nn.Module):
 
 
 
-class UnfoldTiedDirectionalConv(TiedDirectionalConv):
+# Keep old imports/checkpoint class lookup compatible. This is the SAME class,
+# not a replacement with different parameters or numerical behavior.
+TiedDirectionalConv = C4DirectionalConv
+
+
+class UnfoldTiedDirectionalConv(C4DirectionalConv):
     """Same tied convolution through explicit im2col and weighted patch reduction."""
 
     def forward(self, x):

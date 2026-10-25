@@ -4,7 +4,7 @@ from torch.autograd.function import once_differentiable
 import triton
 import triton.language as tl
 
-from .morphological import TiedDirectionalConv
+from .morphological import C4DirectionalConv
 
 
 @triton.jit
@@ -119,7 +119,7 @@ class DepthwiseConvFunction(torch.autograd.Function):
         return dx, dk
 
 
-class TritonTiedDirectionalConv(TiedDirectionalConv):
+class TritonTiedDirectionalConv(C4DirectionalConv):
     """Direct Triton core; canonical weight tying/rotations remain differentiable."""
 
     def forward(self, x):

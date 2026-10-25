@@ -3,7 +3,7 @@ import torch
 from torch import nn
 
 from ..helper import apply_residual, only_do_for_certain_shapes
-from .morphological import TiedDirectionalConv
+from .morphological import C4DirectionalConv
 
 
 def tied_directional_shift(x, masks, model):
@@ -46,7 +46,7 @@ def tied_directional_shift(x, masks, model):
 class TiedShiftLayer(nn.Module):
     """Use one trainable tied convolution per model depth."""
 
-    def __init__(self, multify, n_layers=1, *, model_type=TiedDirectionalConv):
+    def __init__(self, multify, n_layers=1, *, model_type=C4DirectionalConv):
         super().__init__()
         self.models = nn.ModuleList([model_type() for _ in range(n_layers)])
 
