@@ -184,3 +184,36 @@ python src/train.py --config experiments/d4_conv_pilot20/configs/projected_conv_
 ```
 
 The public ARC-AGI-1 evaluation fixture above shares the same task ID/inputs as a Kaggle public task; use the actual Kaggle dataset/runtime for a deployment-representative benchmark. For a full existing experiment worker, add `--step-timing phases` or `--step-timing wall` after `--index N`. Retest production latency with wall mode after finding bottlenecks. Phase instrumentation adds overhead, and CPU tests cannot establish a 0.15-second GPU target. This does not change the model operators or training objective.
+
+
+### Individual operator profiling
+
+Use a separate short run to inspect forward/backward operators. This instruments
+normal training, including candidate tracking and enabled W&B diagnostics. It
+captures zero-based step 10 by default, after ten warmup steps, and disables
+StepTimer so profiler overhead cannot be mistaken for normal latency.
+
+```bash
+python src/train.py \
+  --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json \
+  --task 00576224 --set training.split=evaluation \
+  --set training.device=cuda:0 --set training.iterations=20 \
+  --set training.operator_profile=true \
+  --set experiment.name=d4_conv_operator_profile \
+  --output-dir outputs/d4_conv_operator_profile
+```
+
+Outputs are `<task>.operators.*`: `.cuda.txt` and `.cpu.txt` rank operators by
+self time; `.operators.csv` and `.by_phase.json` attribute operations to training
+phases, with nested numerical-check scopes; `.kernels.json` lists CUDA kernels;
+`.trace.json` is a Chrome/Perfetto timeline; `.manifest.json` records the capture.
+Inspect GPU self time for expensive kernels, CPU self time and timeline gaps for
+dispatch/synchronization overhead, and operator call counts for repeated small
+operations. Inclusive parent and child times overlap: do not add them together.
+Use the clean StepTimer run again to verify any eventual optimization.
+
+Optional overrides: `training.operator_profile_start=10`,
+`training.operator_profile_steps=1`, `training.operator_profile_shapes=true`,
+`training.operator_profile_memory=false`, and `training.operator_profile_stack=false`.
+Shape, stack, and memory instrumentation add overhead. GPU tracing requires a
+working PyTorch/CUPTI installation. CPU tests do not verify CUDA tracing.

@@ -30,6 +30,12 @@ training:
   device: auto
   # off: unchanged path; wall: whole-step; phases: detailed host/CUDA stream timings.
   step_timing: "off"
+  operator_profile: false
+  operator_profile_start: 10
+  operator_profile_steps: 1
+  operator_profile_shapes: true
+  operator_profile_memory: false
+  operator_profile_stack: false
   kl_weight: 1.0
   reconstruction_weight: 10.0
   shape_annealing_start: 0.01

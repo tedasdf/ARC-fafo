@@ -16,6 +16,7 @@ from compressarc.train.metrics import SolutionTracker
 from compressarc.train.checkpoint import save_inference_checkpoint
 from compressarc.train.diagnostics import TrainingDiagnostics
 from compressarc.train.step_timing import StepTimer
+from compressarc.train.operator_profiling import OperatorProfiler
 from compressarc.train.logging import initialize_wandb, log_training_metrics, log_final_candidates, log_model_checkpoint, RunSummary
 
 
@@ -70,6 +71,8 @@ def main(argv=None):
     config = merge_cli_config(args)
     training_config = config.training
     if mode == "benchmark":
+        if training_config.get("operator_profile", False):
+            raise ValueError("Use normal training mode for operator profiling, not benchmark mode")
         if not args.task or args.backend != "local":
             raise ValueError("Benchmark mode requires --task and the local backend")
         if args.warmup_iterations < 1 or args.measured_iterations < 1:
@@ -135,30 +138,50 @@ def main(argv=None):
                                   "pass": args.benchmark_pass, "metrics": result}, indent=2))
                 return result
 
-            with TrainingDiagnostics(run, model, task) as diagnostics, StepTimer(
-                device_object, training_config.get("step_timing", "off"),
+            profiling = training_config.get("operator_profile", False)
+            if profiling and training_config.iterations < training_config.get("operator_profile_start", 10) + training_config.get("operator_profile_steps", 1):
+                raise ValueError("Training iterations must cover the requested operator profiling window")
+            with TrainingDiagnostics(run, model, task) as diagnostics, OperatorProfiler(
+                device_object, args.output_dir / f"{task.task_name}.operators",
+                enabled=profiling, start_step=training_config.get("operator_profile_start", 10),
+                steps=training_config.get("operator_profile_steps", 1),
+                record_shapes=training_config.get("operator_profile_shapes", True),
+                profile_memory=training_config.get("operator_profile_memory", False),
+                with_stack=training_config.get("operator_profile_stack", False),
+            ) as operator_profiler, StepTimer(
+                device_object, "off" if profiling else training_config.get("step_timing", "off"),
                 args.output_dir / f"{task.task_name}.step_timing.jsonl",
             ) as step_timer:
+                def mark_phase(name):
+                    step_timer.mark(name)
+                    operator_profiler.mark(name)
+
+                def observe(category, tensors):
+                    with operator_profiler.scope("numerics/"+category):
+                        diagnostics.observe(category, tensors)
+
                 last_metrics = None
                 progress = tqdm(range(training_config.iterations), desc=task.task_name, leave=False)
                 for train_step in progress:
+                    operator_profiler.before_step(train_step)
                     step_timer.start(train_step)
                     diagnostics.step = train_step
                     last_metrics = take_step(
                         task, model, optimizer, train_step, training_config,
                         return_outputs=True,
-                        **({"phase_callback": step_timer.mark} if step_timer.mode == "phases" else {}),
-                        **({"diagnostic_callback": diagnostics.observe} if run is not None else {}),
+                        **({"phase_callback": mark_phase} if step_timer.mode == "phases" or profiling else {}),
+                        **({"diagnostic_callback": observe} if run is not None else {}),
                     )
-                    step_timer.mark("progress")
+                    mark_phase("progress")
                     progress.set_postfix(loss=f"{last_metrics['loss']:.3f}")
-                    step_timer.mark("diagnostics")
+                    mark_phase("diagnostics")
                     diagnostics.after_step()
-                    step_timer.mark("candidates")
+                    mark_phase("candidates")
                     tracker.update(train_step, last_metrics["outputs"])
-                    step_timer.mark("logging")
+                    mark_phase("logging")
                     log_training_metrics(run, task, tracker, train_step, last_metrics)
                     step_timer.publish(step_timer.finish(), run)
+                    operator_profiler.after_step(train_step)
 
                 if args.save_checkpoints or run is not None:
                     args.output_dir.mkdir(parents=True, exist_ok=True)

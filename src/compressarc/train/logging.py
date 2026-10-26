@@ -20,7 +20,9 @@ def initialize_wandb(config, task):
     if config.get("model", {}).get("shift_implementation") == "d4_tied_conv":
         tags.append("D4-conv")
     step_timing = config.get("training", {}).get("step_timing", "off")
-    if step_timing != "off":
+    if config.get("training", {}).get("operator_profile", False):
+        tags.append("operator-profile")
+    elif step_timing != "off":
         tags.append(f"timing-{step_timing}")
     variant_tag = config.get("experiment", {}).get("variant")
     if variant_tag:
