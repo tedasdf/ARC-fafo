@@ -31,14 +31,9 @@ def take_step(task, model, optimizer, train_step, config=None, return_outputs=Fa
         phase_callback("loss")
     logits = torch.cat([torch.zeros_like(logits[:, :1, :, :]), logits], dim=1)
 
-    kl_components = {
-        name: float(torch.sum(amount).detach().cpu())
-        for amount, name in zip(kl_amounts, kl_names)
-    }
-    total_kl = sum(
-        (torch.sum(kl_amount) for kl_amount in kl_amounts),
-        start=logits.new_zeros(()),
-    )
+    # Compute each KL reduction once; transfer all scalar metrics together below.
+    kl_sums = [torch.sum(amount) for amount in kl_amounts]
+    total_kl = sum(kl_sums, start=logits.new_zeros(()))
     reconstruction_error = logits.new_zeros(())
 
     for example_num in range(task.n_examples):
@@ -134,11 +129,12 @@ def take_step(task, model, optimizer, train_step, config=None, return_outputs=Fa
 
     if phase_callback is not None:
         phase_callback("metrics")
+    scalar_values = torch.stack([total_kl, reconstruction_error, loss, *kl_sums]).detach().cpu().tolist()
     metrics = {
-        "kl": float(total_kl.detach().cpu()),
-        "kl_components": kl_components,
-        "reconstruction_error": float(reconstruction_error.detach().cpu()),
-        "loss": float(loss.detach().cpu()),
+        "kl": scalar_values[0],
+        "kl_components": dict(zip(kl_names, scalar_values[3:])),
+        "reconstruction_error": scalar_values[1],
+        "loss": scalar_values[2],
     }
     if return_outputs:
         metrics["outputs"] = tuple(

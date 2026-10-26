@@ -28,6 +28,8 @@ training:
   optimizer_betas: [0.5, 0.9]
   seed: 0
   device: auto
+  # off: unchanged path; wall: whole-step; phases: detailed host/CUDA stream timings.
+  step_timing: "off"
   kl_weight: 1.0
   reconstruction_weight: 10.0
   shape_annealing_start: 0.01

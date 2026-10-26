@@ -19,6 +19,9 @@ def initialize_wandb(config, task):
         tags.append("C4")
     if config.get("model", {}).get("shift_implementation") == "d4_tied_conv":
         tags.append("D4-conv")
+    step_timing = config.get("training", {}).get("step_timing", "off")
+    if step_timing != "off":
+        tags.append(f"timing-{step_timing}")
     variant_tag = config.get("experiment", {}).get("variant")
     if variant_tag:
         tags.append(variant_tag)
@@ -33,6 +36,7 @@ def initialize_wandb(config, task):
     run.define_metric("candidates/*", step_metric="train_step")
     run.define_metric("kernels/*", step_metric="train_step")
     run.define_metric("numerics/*", step_metric="train_step")
+    run.define_metric("timing/*", step_metric="train_step")
     return run
 
 

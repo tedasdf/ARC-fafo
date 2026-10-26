@@ -15,6 +15,7 @@ from compressarc.train import take_step
 from compressarc.train.metrics import SolutionTracker
 from compressarc.train.checkpoint import save_inference_checkpoint
 from compressarc.train.diagnostics import TrainingDiagnostics
+from compressarc.train.step_timing import StepTimer
 from compressarc.train.logging import initialize_wandb, log_training_metrics, log_final_candidates, log_model_checkpoint, RunSummary
 
 
@@ -134,20 +135,30 @@ def main(argv=None):
                                   "pass": args.benchmark_pass, "metrics": result}, indent=2))
                 return result
 
-            with TrainingDiagnostics(run, model, task) as diagnostics:
+            with TrainingDiagnostics(run, model, task) as diagnostics, StepTimer(
+                device_object, training_config.get("step_timing", "off"),
+                args.output_dir / f"{task.task_name}.step_timing.jsonl",
+            ) as step_timer:
                 last_metrics = None
                 progress = tqdm(range(training_config.iterations), desc=task.task_name, leave=False)
                 for train_step in progress:
+                    step_timer.start(train_step)
                     diagnostics.step = train_step
                     last_metrics = take_step(
                         task, model, optimizer, train_step, training_config,
                         return_outputs=True,
+                        **({"phase_callback": step_timer.mark} if step_timer.mode == "phases" else {}),
                         **({"diagnostic_callback": diagnostics.observe} if run is not None else {}),
                     )
+                    step_timer.mark("progress")
                     progress.set_postfix(loss=f"{last_metrics['loss']:.3f}")
+                    step_timer.mark("diagnostics")
                     diagnostics.after_step()
+                    step_timer.mark("candidates")
                     tracker.update(train_step, last_metrics["outputs"])
+                    step_timer.mark("logging")
                     log_training_metrics(run, task, tracker, train_step, last_metrics)
+                    step_timer.publish(step_timer.finish(), run)
 
                 if args.save_checkpoints or run is not None:
                     args.output_dir.mkdir(parents=True, exist_ok=True)

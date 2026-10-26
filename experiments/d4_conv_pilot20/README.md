@@ -19,3 +19,5 @@ python experiments/d4_conv_pilot20/run_job.py --index 0 --dry-run
 ```
 
 The test contract covers core and projected-layer D4 actions under joint spatial/directional/mask transforms, optimizer updates, output/input/kernel/projection gradients and state round trips. This does not assert full ARC model prediction equivariance. All local checks use CPU; CUDA remains to be verified in M3. The remaining 60 task/seed combinations are deliberately not submitted as part of this pilot.
+
+Per-step wall timing is now enabled for future launches. Detailed profiling: add `--step-timing phases` to run_job.py. Timing files and summaries are written beside checkpoints, and W&B receives timing/* metrics. Existing running jobs keep their imported code/config.

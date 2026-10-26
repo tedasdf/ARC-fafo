@@ -164,3 +164,23 @@ guesses include the last forward pass made before that update. These are distinc
 states, both retained. Use the same code/backend implementation as the saved
 configuration, with `src` importable, to reconstruct the model.
 
+
+
+## Per-step latency and bottleneck profiling
+
+`training.step_timing` accepts `off` (the default), `wall`, or `phases`. The D4-conv pilot now enables `wall` in its config for future launches. Already-running processes are not changed.
+
+- `wall` records total step time, including the model update, output transfers, candidate tracking, diagnostics and normal scalar logging.
+- `phases` additionally records host wall durations for forward, loss, backward, optimizer, metric extraction, progress display, post-step diagnostics, candidate tracking and logging. On CUDA it also records stream elapsed times with events. Only step boundaries synchronize; phase boundaries do not.
+- CUDA stream elapsed includes CPU-dispatch gaps and is not GPU kernel-active time. Host and stream times overlap; never add them together.
+- Numerics checks inside take_step are included in their enclosing phase; the separate diagnostics phase measures diagnostics.after_step only.
+
+Every measured step is written to `<output-dir>/<task>.step_timing.jsonl` and, when enabled, W&B under `timing/*` with train_step as the x-axis. Summary statistics go to `<task>.step_timing.summary.json`. The summary excludes the first ten completed measurements from steady statistics when more than ten are available. First-step and periodic 50-step overhead remain visible in the per-step file. Timing-export overhead is excluded from the step metric and recorded separately, including an all-step mean with export overhead included. Data loading, model construction, final checkpoints/artifacts and final candidate-table uploads are outside the per-step timing.
+
+For a short D4-only performance experiment in an allocated GPU session:
+
+```bash
+python src/train.py --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json --task 00576224 --set training.split=evaluation --set training.device=cuda:0 --set training.iterations=100 --set training.step_timing=phases --set experiment.name=projected_conv_d4_latency_profile --output-dir outputs/d4_conv_latency_profile
+```
+
+The public ARC-AGI-1 evaluation fixture above shares the same task ID/inputs as a Kaggle public task; use the actual Kaggle dataset/runtime for a deployment-representative benchmark. For a full existing experiment worker, add `--step-timing phases` or `--step-timing wall` after `--index N`. Retest production latency with wall mode after finding bottlenecks. Phase instrumentation adds overhead, and CPU tests cannot establish a 0.15-second GPU target. This does not change the model operators or training objective.

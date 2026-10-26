@@ -32,7 +32,8 @@
     "reconstruction_weight": 10.0,
     "shape_annealing_start": 0.01,
     "marginal_annealing_start": 0.1,
-    "annealing_steps": 100
+    "annealing_steps": 100,
+    "step_timing": "wall"
   },
   "logging": {
     "wandb": true,
