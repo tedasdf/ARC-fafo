@@ -66,3 +66,38 @@ def test_partial_capture_on_exception(tmp_path):
             profiler.after_step(0)
             raise RuntimeError("intentional")
     assert json.loads(prefix.with_suffix(".manifest.json").read_text())["status"] == "partial"
+
+
+def test_cuda_kernel_export_with_real_interval_api(tmp_path, monkeypatch):
+    # Exercise the CUDA event export branch without requiring a local GPU.
+    from types import SimpleNamespace
+    from torch.autograd.profiler_util import Interval
+
+    class FakeProfiler:
+        def __exit__(self, *args):
+            pass
+
+        def export_chrome_trace(self, path):
+            from pathlib import Path
+            Path(path).write_text('{"traceEvents": []}')
+
+        def key_averages(self, **kwargs):
+            return SimpleNamespace(table=lambda **kw: "operator table")
+
+        def events(self):
+            return [SimpleNamespace(device_type=torch.autograd.DeviceType.CUDA,
+                                    name="test_kernel", time_range=Interval(10., 35.)),
+                    SimpleNamespace(device_type=torch.autograd.DeviceType.CUDA,
+                                    name="test_kernel", time_range=Interval(40., 55.))]
+
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda device: "mock GPU")
+    prefix = tmp_path / "cuda"
+    profiler = OperatorProfiler("cuda:0", prefix, enabled=True, steps=1)
+    profiler.profiler = FakeProfiler()
+    profiler.active = True
+    profiler.captured = [10]
+    profiler._stop((None, None, None))
+    assert json.loads(prefix.with_suffix(".kernels.json").read_text()) == [
+        {"kernel": "test_kernel", "calls": 2, "duration_us": 40.}]
+    assert prefix.with_suffix(".cuda.txt").is_file()
+    assert json.loads(prefix.with_suffix(".manifest.json").read_text())["status"] == "complete"

@@ -125,7 +125,7 @@ class OperatorProfiler:
             if event.device_type == torch.autograd.DeviceType.CUDA:
                 item = kernels[event.name]
                 item['calls'] += 1
-                item['duration_us'] += event.time_range.elapsed()
+                item['duration_us'] += float(event.time_range.end - event.time_range.start)
                 continue
             if event.device_type != torch.autograd.DeviceType.CPU or event.name.startswith('ttt/'):
                 continue
