@@ -280,3 +280,38 @@ artifact is `arc_agi/compressarc-final-ablation/d4-conv-layer-profile`, type
 The upload uses online mode and prints the W&B link. Upload failure preserves
 all local outputs; retry with the standalone artifact command above rather than
 rerunning training. Upload is outside the measured training intervals.
+
+
+### Equivalent vectorized primitive direction sharing
+
+`model.direction_share_implementation=vectorized` selects packed-GEMM evaluation
+of the original primitive's pair-weight equations. It does not select the
+projected D4 direction-sharing architecture. Original pair matrices, biases,
+coefficient pattern, normalization, initialization, and tied parameter objects
+are retained. No new trainable parameters are introduced. Temporary block
+matrices are rebuilt each forward so optimizer updates and autograd sharing are
+preserved. Non-directional components pass through untouched. The default stays
+`primitives`, and existing experiment configs are unchanged.
+
+Floating-point summation order changes, so outputs/gradients agree within tested
+tolerances, not bitwise. Long training trajectories can diverge numerically;
+compare accuracy and speed rather than expecting identical candidate histories.
+CUDA tests are included but require a GPU; local CPU timing is not a GPU claim.
+
+Profile it against the existing baseline on the same GPU/task/settings:
+
+```bash
+python src/profile_layers.py \
+  --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json \
+  --task 00576224 --set training.split=evaluation \
+  --set model.direction_share_implementation=vectorized \
+  --device cuda:0 --output-dir outputs/d4_conv_vectorized_profile \
+  --upload-wandb --artifact-name d4-conv-vectorized-direction-profile
+```
+
+W&B adds `direction-share-vectorized` to these runs. Run the GPU contract before
+profiling if desired:
+
+```bash
+python -m pytest src/tests/correctness/layers/direction_share/test_direction_share_vectorization_contract.py -q
+```

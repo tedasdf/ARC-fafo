@@ -19,6 +19,8 @@ def initialize_wandb(config, task):
         tags.append("C4")
     if config.get("model", {}).get("shift_implementation") == "d4_tied_conv":
         tags.append("D4-conv")
+    if config.get("model", {}).get("direction_share_implementation") == "vectorized":
+        tags.append("direction-share-vectorized")
     step_timing = config.get("training", {}).get("step_timing", "off")
     if config.get("training", {}).get("operator_profile", False):
         tags.append("operator-profile")

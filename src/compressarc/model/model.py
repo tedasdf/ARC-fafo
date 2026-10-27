@@ -121,7 +121,8 @@ class ARCCompressor:
         for name in ("cummax", "shift", "direction_share"):
             implementation = getattr(self.config, f"{name}_implementation")
             options = {}
-            if implementation != "primitives":
+            projected = implementation != "primitives" and not (name == "direction_share" and implementation == "vectorized")
+            if projected:
                 options["n_layers"] = self.n_layers
                 if name == "cummax":
                     options.update(
@@ -132,8 +133,8 @@ class ARCCompressor:
                     )
             layer = factory.create(name, implementation, multify=multify, **options)
             setattr(self, name, layer)
-            self._layer_call_options[name] = implementation != "primitives"
-            if implementation != "primitives":
+            self._layer_call_options[name] = projected
+            if projected:
                 anchor = self.weights_list[0]
                 layer.to(device=anchor.device, dtype=anchor.dtype)
                 self.weights_list.extend(layer.parameters())

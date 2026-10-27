@@ -11,6 +11,7 @@ from ..layers.shift.D4_morphological import D4DirectionalConv
 from ..layers.cummax.layer import LSELayer
 from ..layers.cummax.primitives import CummaxPrimitives
 from ..layers.direction_share.primitives import DirectionSharePrimitives
+from ..layers.direction_share.vectorized import DirectionShareVectorized
 from ..layers.direction_share.morphological import D4DirectionShareLayer
 
 
@@ -59,7 +60,7 @@ class LayerFactory:
                 "optimised": partial(LSELayer, model_type=OptimisedMax),
                 "triton": create_triton_cummax,
             },
-            "direction_share": {"primitives": DirectionSharePrimitives, "d4": D4DirectionShareLayer},
+            "direction_share": {"primitives": DirectionSharePrimitives, "vectorized": DirectionShareVectorized, "d4": D4DirectionShareLayer},
         }
 
     def register(self, layer_name, implementation_name, implementation):
