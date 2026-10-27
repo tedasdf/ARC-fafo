@@ -67,7 +67,10 @@ def main(argv=None):
     analysis = json.loads(Path(str(prefix)+'.layers.json').read_text())
     import statistics
     latencies = [r['timing/step_seconds'] for r in clean]
-    report = dict(task=args.task, warmup_steps=args.warmup_steps,
+    from config import load_config
+    effective_config = load_config(args.config, args.overrides)
+    report = dict(task=args.task, optimizer_implementation=effective_config.training.get('optimizer_implementation', 'default'),
+                  warmup_steps=args.warmup_steps,
                   measured_clean_steps=len(clean), clean_mean_seconds=statistics.mean(latencies),
                   clean_median_seconds=statistics.median(latencies), clean_phase_means=means,
                   profile=analysis,
@@ -78,10 +81,13 @@ def main(argv=None):
                       'Consider a custom D4-conv kernel only if shift GPU execution or launch count is substantial.',
                       'Preserve math and validate outputs/gradients, then repeat clean timing on the same task and GPU.'])
     (root/'comparison.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
-    phase_keys = ['forward','loss','backward','optimizer','metrics','candidates','logging']
+    phase_keys = ['forward','loss','backward','optimizer',
+                  'optimizer_gradient_checks','optimizer_adam','optimizer_parameter_checks',
+                  'metrics','candidates','logging']
     text = [f"Clean full-step mean: {report['clean_mean_seconds']:.6f} s",
             f"Clean full-step median: {report['clean_median_seconds']:.6f} s",
             f"Measured steps: {len(clean)} after {args.warmup_steps} warmup steps", '',
+            'Optimizer subspans are included in the optimizer total; do not add both.',
             'Clean phase | host seconds | CUDA-stream seconds (includes dispatch gaps)']
     for name in phase_keys:
         text.append(f"{name} | {means.get('timing/host_'+name+'_seconds',0):.6f} | {means.get('timing/stream_'+name+'_seconds',0):.6f}")

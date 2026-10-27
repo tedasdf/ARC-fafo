@@ -1,5 +1,7 @@
 """ARC reconstruction objective and one optimizer update."""
 
+from contextlib import nullcontext
+
 import torch
 import torch.nn.functional as functional
 from config import load_config
@@ -18,7 +20,7 @@ def mask_select_logprobs(mask, length):
 
 
 def take_step(task, model, optimizer, train_step, config=None, return_outputs=False,
-              phase_callback=None, diagnostic_callback=None):
+              phase_callback=None, diagnostic_callback=None, optimizer_scope=None):
     """Compute the ARC objective, update model weights, and return scalar metrics."""
     config = config if config is not None else load_config().training
     optimizer.zero_grad()
@@ -121,11 +123,14 @@ def take_step(task, model, optimizer, train_step, config=None, return_outputs=Fa
     loss.backward()
     if phase_callback is not None:
         phase_callback("optimizer")
-    if diagnostic_callback is not None:
-        diagnostic_callback("gradients", (p.grad for p in model.weights_list))
-    optimizer.step()
-    if diagnostic_callback is not None:
-        diagnostic_callback("parameters", model.weights_list)
+    with optimizer_scope("gradient_checks") if optimizer_scope else nullcontext():
+        if diagnostic_callback is not None:
+            diagnostic_callback("gradients", (p.grad for p in model.weights_list))
+    with optimizer_scope("adam") if optimizer_scope else nullcontext():
+        optimizer.step()
+    with optimizer_scope("parameter_checks") if optimizer_scope else nullcontext():
+        if diagnostic_callback is not None:
+            diagnostic_callback("parameters", model.weights_list)
 
     if phase_callback is not None:
         phase_callback("metrics")

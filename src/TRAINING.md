@@ -392,3 +392,58 @@ python src/profile_layers.py \
 
 W&B adds the `softmax-fused` tag. Use the same GPU and diagnostics settings for
 before/after clean wall timings; check memory and the detailed softmax launches.
+
+
+### Fused Adam and optimizer subphase profiling
+
+`training.optimizer_implementation=default` preserves the previous Adam
+construction. `fused` explicitly requests native `torch.optim.Adam(fused=True)`
+for CUDA parameters. Learning rate, betas, epsilon, weight decay, and other Adam
+defaults are unchanged. Unsupported modes/devices raise instead of silently
+falling back. Fused updates can differ in floating-point rounding and require
+GPU parity tests; a speedup is not assumed. Existing configs and defaults stay
+on the original selection. W&B tags fused runs with `adam-fused`.
+
+Phase timing now separates `optimizer_gradient_checks`, `optimizer_adam`, and
+`optimizer_parameter_checks`, inside the existing optimizer phase. The first
+includes any configured gradient-norm diagnostics; the third checks updated
+parameters. Checks and ordering are retained. Subphases add CUDA events, not
+synchronization barriers. They are parts of the optimizer total: do not add both
+parent and child times. No-diagnostics runs naturally show near-zero check cost.
+Detailed artifacts also report optimizer subcomponent launch/synchronization/
+scalar-read counts in `.layers.json` and `.layers.txt`.
+
+On M3, validate the CUDA optimizer contract before comparing speeds:
+
+```bash
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python -m pytest src/tests/correctness/training/test_optimizer_modes.py -q -x
+```
+
+Run the existing profiling command twice, preserving task, GPU, seed and diagnostics:
+
+```bash
+python src/profile_layers.py \
+  --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json \
+  --task 00576224 --set training.split=evaluation \
+  --set model.direction_share_implementation=vectorized \
+  --set model.cummax_implementation=triton_hard \
+  --set model.softmax_implementation=fused \
+  --set training.optimizer_implementation=default \
+  --device cuda:0 --output-dir outputs/d4_conv_adam_default_profile \
+  --upload-wandb --artifact-name d4-conv-adam-default-profile
+
+python src/profile_layers.py \
+  --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json \
+  --task 00576224 --set training.split=evaluation \
+  --set model.direction_share_implementation=vectorized \
+  --set model.cummax_implementation=triton_hard \
+  --set model.softmax_implementation=fused \
+  --set training.optimizer_implementation=fused \
+  --device cuda:0 --output-dir outputs/d4_conv_adam_fused_profile \
+  --upload-wandb --artifact-name d4-conv-adam-fused-profile
+```
+
+`comparison.txt` shows clean full-step and optimizer subphase timings. Each run
+contains a clean pass and a separate short instrumented capture. Compare latency
+and peak memory on multiple task sizes before using fused mode for a large batch.

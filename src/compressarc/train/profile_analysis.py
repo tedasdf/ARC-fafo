@@ -49,8 +49,12 @@ def analyze_trace(path, prefix=None):
             backward_seq = inherited.get('backward_seq')
             if phase == 'backward' and sequence is not None and 'Backward' in e['name']:
                 backward_seq = (e['pid'], sequence)
+            optimizer_component = inherited.get('optimizer_component')
+            if e['name'].startswith('ttt/optimizer/'):
+                optimizer_component = e['name'].split('/')[-1]
             info[i] = dict(phase=phase, layer=layer, backward_seq=backward_seq,
-                           self_cpu_us=float(e['dur']), parent=parent)
+                           self_cpu_us=float(e['dur']), parent=parent,
+                           optimizer_component=optimizer_component)
             if parent is not None:
                 info[parent]['self_cpu_us'] -= e['dur']
             if phase == 'forward' and layer and sequence is not None:
@@ -79,7 +83,7 @@ def analyze_trace(path, prefix=None):
         return dict(kernel_launches=0, gpu_kernel_us=0., cpu_operator_self_us=0.,
                     host_range_us=0., synchronization_calls=0, synchronization_host_us=0.,
                     scalar_reads=0)
-    layers, phases, operations, sync_apis = (defaultdict(entry) for _ in range(4))
+    layers, phases, operations, sync_apis, optimizer_parts = (defaultdict(entry) for _ in range(5))
     for p in ranges:
         phases[p['name'][4:]]['host_range_us'] += p['dur']
     for i, item in info.items():
@@ -87,8 +91,14 @@ def analyze_trace(path, prefix=None):
         phase, layer = owner(i)
         if e['name'].startswith('layer/'):
             layers[(phase, layer)]['host_range_us'] += e['dur']
+        part = item.get('optimizer_component')
+        if e['name'].startswith('ttt/optimizer/'):
+            optimizer_parts[part]['host_range_us'] += e['dur']
         if e.get('cat') == 'cpu_op':
-            for row in (layers[(phase, layer)], phases[phase]):
+            targets = [layers[(phase, layer)], phases[phase]]
+            if phase == 'optimizer':
+                targets.append(optimizer_parts[part or 'unassigned'])
+            for row in targets:
                 row['cpu_operator_self_us'] += max(0., item['self_cpu_us'])
                 row['scalar_reads'] += e['name'] == 'aten::_local_scalar_dense'
     unmatched = 0
@@ -104,7 +114,11 @@ def analyze_trace(path, prefix=None):
             operation = events[index]['name'] if index is not None else 'unknown'
             unmatched += index is None
             kernel_durations.append(e['dur'])
-            for row in (layers[(phase, layer)], phases[phase], operations[operation]):
+            targets = [layers[(phase, layer)], phases[phase], operations[operation]]
+            if phase == 'optimizer':
+                part = info[index].get('optimizer_component') if index is not None else None
+                targets.append(optimizer_parts[part or 'unassigned'])
+            for row in targets:
                 row['kernel_launches'] += 1
                 row['gpu_kernel_us'] += e['dur']
         elif category == 'cuda_runtime' and 'Synchronize' in e['name']:
@@ -112,7 +126,11 @@ def analyze_trace(path, prefix=None):
             phase, layer = owner(index)
             if phase == 'unscoped':
                 phase = phase_at(e)
-            for row in (layers[(phase, layer)], phases[phase], sync_apis[(phase, e['name'])]):
+            targets = [layers[(phase, layer)], phases[phase], sync_apis[(phase, e['name'])]]
+            if phase == 'optimizer':
+                part = info[index].get('optimizer_component') if index is not None else None
+                targets.append(optimizer_parts[part or 'unassigned'])
+            for row in targets:
                 row['synchronization_calls'] += 1
                 row['synchronization_host_us'] += e['dur']
     merged = []
@@ -135,6 +153,7 @@ def analyze_trace(path, prefix=None):
     result = dict(
         captured_forward_steps=sum(p['name']=='ttt/forward' for p in ranges),
         component_totals=component_rows,
+        optimizer_components=[dict(component=k, **v) for k,v in optimizer_parts.items()],
         kernel_launches=len(kernel_durations), gpu_kernel_us=sum(kernel_durations),
         unmatched_kernel_launches=unmatched,
         layer_attributed_kernel_launches=sum(r['kernel_launches'] for r in layer_rows if r['layer']!='unassigned'),
@@ -161,6 +180,8 @@ def analyze_trace(path, prefix=None):
                  f"Totals across {result['captured_forward_steps']} captured step(s).",
                  'Phase | kernels | GPU kernel ms | host range ms | sync calls']
         lines += [f"{r['phase']} | {r['kernel_launches']} | {r['gpu_kernel_us']/1000:.3f} | {r['host_range_us']/1000:.3f} | {r['synchronization_calls']}" for r in result['phases']]
+        lines += ['', 'Optimizer subcomponent (included in optimizer phase) | kernels | GPU ms | host range ms | sync calls | scalar reads']
+        lines += [f"{r['component']} | {r['kernel_launches']} | {r['gpu_kernel_us']/1000:.3f} | {r['host_range_us']/1000:.3f} | {r['synchronization_calls']} | {r['scalar_reads']}" for r in result['optimizer_components']]
         lines += ['', 'Component across depths | phase | kernels | GPU kernel ms | CPU operator self ms']
         lines += [f"{r['component']} | {r['phase']} | {r['kernel_launches']} | {r['gpu_kernel_us']/1000:.3f} | {r['cpu_operator_self_us']/1000:.3f}" for r in component_rows]
         lines += ['', 'Layer | phase | kernels | GPU kernel ms | CPU operator self ms']

@@ -1,5 +1,6 @@
 """Train ARCCompressor tasks locally or on Modal with optional correctness logging."""
 
+from contextlib import contextmanager
 import argparse
 import json
 from pathlib import Path
@@ -16,6 +17,7 @@ from compressarc.train.metrics import SolutionTracker
 from compressarc.train.checkpoint import save_inference_checkpoint
 from compressarc.train.diagnostics import TrainingDiagnostics
 from compressarc.train.step_timing import StepTimer
+from compressarc.train.optimizer import create_optimizer
 from compressarc.train.operator_profiling import OperatorProfiler
 from compressarc.train.logging import initialize_wandb, log_training_metrics, log_final_candidates, log_model_checkpoint, RunSummary
 
@@ -122,11 +124,8 @@ def main(argv=None):
         run = initialize_wandb(config, task) if timing is None else None
         with RunSummary(run, device_object):
             model = setup_call("setup/model_ms", lambda: ARCCompressor(task, config.model))
-            optimizer = setup_call("setup/optimizer_ms", lambda: torch.optim.Adam(
-                model.weights_list,
-                lr=training_config.learning_rate,
-                betas=tuple(training_config.optimizer_betas),
-            ))
+            optimizer = setup_call("setup/optimizer_ms", lambda: create_optimizer(
+                model.weights_list, training_config))
             tracker = SolutionTracker(task)
             if timing is not None:
                 timing.finish_setup()
@@ -160,6 +159,11 @@ def main(argv=None):
                     with operator_profiler.scope("numerics/"+category):
                         diagnostics.observe(category, tensors)
 
+                @contextmanager
+                def optimizer_scope(name):
+                    with step_timer.optimizer_scope(name), operator_profiler.scope("optimizer/"+name):
+                        yield
+
                 last_metrics = None
                 progress = tqdm(range(training_config.iterations), desc=task.task_name, leave=False)
                 for train_step in progress:
@@ -171,6 +175,7 @@ def main(argv=None):
                         return_outputs=True,
                         **({"phase_callback": mark_phase} if step_timer.mode == "phases" or profiling else {}),
                         **({"diagnostic_callback": observe} if run is not None else {}),
+                        **({"optimizer_scope": optimizer_scope} if step_timer.mode == "phases" or profiling else {}),
                     )
                     mark_phase("progress")
                     progress.set_postfix(loss=f"{last_metrics['loss']:.3f}")

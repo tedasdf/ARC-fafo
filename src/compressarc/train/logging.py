@@ -25,6 +25,8 @@ def initialize_wandb(config, task):
         tags.append("cummax-triton-hard")
     if config.get("model", {}).get("softmax_implementation") == "fused":
         tags.append("softmax-fused")
+    if config.get("training", {}).get("optimizer_implementation", "default") == "fused":
+        tags.append("adam-fused")
     step_timing = config.get("training", {}).get("step_timing", "off")
     if config.get("training", {}).get("operator_profile", False):
         tags.append("operator-profile")

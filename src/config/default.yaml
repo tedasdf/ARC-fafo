@@ -28,6 +28,8 @@ training:
   iterations: 2000
   learning_rate: 0.01
   optimizer_betas: [0.5, 0.9]
+  # default: unchanged Adam selection; fused: CUDA fused Adam.
+  optimizer_implementation: default
   seed: 0
   device: auto
   # off: unchanged path; wall: whole-step; phases: detailed host/CUDA stream timings.

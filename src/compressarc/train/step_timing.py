@@ -1,4 +1,5 @@
 """Optional training-step latency measurements without per-phase CUDA barriers."""
+from contextlib import contextmanager
 import json
 import math
 import statistics
@@ -44,7 +45,7 @@ class StepTimer:
             steady = values[10:] or values
             report = dict(mode=self.mode, device=str(self.device), completed_timed_steps=len(values),
                           warmup_steps_omitted=10 if len(values)>10 else 0,
-                          note='CUDA stream times include dispatch gaps. Host/stream overlap. Timing export excluded.',
+                          note='CUDA stream times include dispatch gaps. Host/stream overlap. Optimizer subspans are included in the optimizer total; do not add both. Timing export excluded.',
                           mean_step_seconds=statistics.mean(values) if values else None,
                           steady_mean_step_seconds=statistics.mean(steady) if steady else None,
                           steady_median_step_seconds=statistics.median(steady) if steady else None,
@@ -91,6 +92,22 @@ class StepTimer:
                 self.events.append((self.phase, self.phase_event, event))
         self.phase = None if phase == 'end' else phase
         self.phase_started, self.phase_event = now, event
+
+    @contextmanager
+    def optimizer_scope(self, name):
+        """Nested spans within optimizer; add no CUDA synchronization barriers."""
+        if self.mode != 'phases':
+            yield
+            return
+        key = 'optimizer_' + name
+        started, event = self.clock(), self._event()
+        try:
+            yield
+        finally:
+            ended, end_event = self.clock(), self._event()
+            self.host[key] = self.host.get(key, 0) + ended-started
+            if event is not None:
+                self.events.append((key, event, end_event))
 
     def finish(self):
         if not self.enabled:
