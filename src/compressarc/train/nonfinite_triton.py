@@ -5,12 +5,12 @@ import triton.language as tl
 
 
 @triton.jit
-def _scan(META, PARTIAL, DTYPE:tl.constexpr, BLOCK:tl.constexpr):
+def _scan(META, PARTIAL, POINTER_TYPE:tl.constexpr, BLOCK:tl.constexpr):
     tile = tl.program_id(0)
     address = tl.load(META+tile*3)
     offset = tl.load(META+tile*3+1)
     length = tl.load(META+tile*3+2)
-    pointer = address.to(tl.pointer_type(DTYPE))
+    pointer = address.to(POINTER_TYPE)
     index = tl.arange(0, BLOCK)
     values = tl.load(pointer+offset+index, index<length, other=0.)
     # Count elements, not just a boolean flag. +/-Inf both count as infinity.
@@ -28,5 +28,8 @@ def count_tiles(metadata, dtype):
     """Metadata owns no tensor storage; caller keeps source tensors alive."""
     partial = torch.empty((metadata.shape[0],2),device=metadata.device,dtype=torch.int64)
     with torch.cuda.device(metadata.device):
-        _scan[(metadata.shape[0],)](metadata,partial,DTYPE=DTYPES[dtype],BLOCK=1024)
+        # Construct on the host: inside a JIT function DTYPE is a constexpr
+        # wrapper, which older Triton pointer_type constructors reject.
+        pointer_type = tl.pointer_type(DTYPES[dtype])
+        _scan[(metadata.shape[0],)](metadata,partial,POINTER_TYPE=pointer_type,BLOCK=1024)
         return partial.sum(dim=0)
