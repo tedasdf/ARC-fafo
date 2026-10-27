@@ -354,3 +354,41 @@ python src/profile_layers.py \
 These runs receive the W&B tag `cummax-triton-hard`. Compare clean full-step
 latency, cummax forward/backward GPU duration, launch count, and peak memory.
 A successful forward alone is insufficient: the gradient and tie cases must pass.
+
+
+### Native fused semantic-subset softmax
+
+`model.softmax_implementation=fused` keeps all original nonempty semantic-axis
+subsets, excludes examples/channels from normalization, and preserves subset
+concatenation order. Single-axis subsets call native `torch.softmax` directly;
+multiple-axis subsets move/flatten their reduction axes, call native softmax,
+then restore the axis layout. The original projections, normalization options,
+biases, residual, initialization, and parameter sharing remain unchanged.
+No parameters are added. The default remains `primitives`.
+
+Native forward/backward replace separate max, exp, sum, and divide graphs.
+Multi-axis permutations may need copies: speedup is not guaranteed. Floating-point
+reduction order changes, so comparisons are numerical, not bitwise.
+
+On M3, first validate the GPU cases (requires src on the Python path):
+
+```bash
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python -m pytest src/tests/correctness/layers/softmax/test_softmax_fused.py -q -x
+```
+
+Then compare to the hard-cummax + vectorized-direction-sharing baseline:
+
+```bash
+python src/profile_layers.py \
+  --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json \
+  --task 00576224 --set training.split=evaluation \
+  --set model.direction_share_implementation=vectorized \
+  --set model.cummax_implementation=triton_hard \
+  --set model.softmax_implementation=fused \
+  --device cuda:0 --output-dir outputs/d4_conv_fused_softmax_profile \
+  --upload-wandb --artifact-name d4-conv-fused-softmax-profile
+```
+
+W&B adds the `softmax-fused` tag. Use the same GPU and diagnostics settings for
+before/after clean wall timings; check memory and the detailed softmax launches.

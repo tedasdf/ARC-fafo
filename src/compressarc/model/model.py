@@ -10,6 +10,7 @@ from .initialization.symmetry import apply_weight_symmetry
 from .layer_factory import LayerFactory
 from .multitensor_systems import multify
 from ..layers.helper import nonlinear, normalize, softmax
+from ..layers.softmax_fused import softmax_fused
 from ..layers.latent_decoder import LatentDecoder
 from ..layers.output_heads import OutputHeads
 from ..layers.share.primitives import MultitensorShare
@@ -113,6 +114,10 @@ class ARCCompressor:
     def _init_layers(self):
         if self.config.direction_share_implementation == "d4":
             self._init_projected_direction_share()
+        softmax_backend = self.config.get("softmax_implementation", "primitives")
+        if softmax_backend not in ("primitives", "fused"):
+            raise ValueError(f"Unknown softmax implementation: {softmax_backend!r}")
+        self.softmax = softmax_fused if softmax_backend == "fused" else softmax
         factory = LayerFactory()
         self.latent_decoder = LatentDecoder(multify)
         self.output_heads = OutputHeads()
@@ -155,7 +160,7 @@ class ARCCompressor:
             with profile_layer(f"depth_{layer_num}/share_up"):
                 x = self.share.share_up(x, weights["share_up"])
             with profile_layer(f"depth_{layer_num}/softmax"):
-                x = softmax(
+                x = self.softmax(
                     x,
                     weights["softmax"],
                     pre_norm=False,
