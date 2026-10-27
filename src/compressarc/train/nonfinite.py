@@ -19,6 +19,54 @@ def tile_metadata(tensors, block=1024):
     return rows
 
 
+def prepare_direct(tensors):
+    """Inspect only ordinary Tensor/Parameter metadata with dispatch disabled.
+
+    Materialize iterators first so caller code never executes under the guard.
+    Subclasses stay on the original path, with their dispatch hooks intact.
+    No tensor allocation, value arithmetic, or GPU work occurs under this guard.
+    """
+    sources = list(tensors)
+    fallback,fast,signatures,subclasses = {},{},{},[]
+    guard = getattr(torch._C, 'DisableTorchFunction', nullcontext)
+    with guard():
+        for value in sources:
+            if value is None:
+                continue
+            if type(value) not in (torch.Tensor,torch.nn.Parameter):
+                subclasses.append(value)
+                continue
+            dtype,device = value.dtype,value.device
+            if not (dtype.is_floating_point or dtype.is_complex):
+                continue
+            if device.type == 'cuda' and dtype in SUPPORTED and value.is_contiguous():
+                size = value.numel()
+                if size:
+                    key = (device,dtype)
+                    fast.setdefault(key,[]).append(value)
+                    signatures.setdefault(key,[]).append((id(value),value.data_ptr(),size))
+            else:
+                fallback.setdefault(device,[]).append(value)
+    if subclasses:
+        # A subclass can override cat/classification for an entire mixed list.
+        # Keep the whole observation on the original path in its original order.
+        reference = {}
+        for value in sources:
+            if value is not None and (value.is_floating_point() or value.is_complex()):
+                reference.setdefault(value.device,[]).append(value.detach().reshape(-1))
+        return reference,{},{}
+    # Preserve normal dispatch/autograd behavior for fallback view construction.
+    reference = {device:[v.detach().reshape(-1) for v in values] for device,values in fallback.items()}
+    return reference,fast,signatures
+
+
+def tiles_from_signature(signature, block=1024):
+    rows = []
+    for _,pointer,size in signature:
+        rows.extend((pointer,start,min(block,size-start)) for start in range(0,size,block))
+    return rows
+
+
 class NonfiniteCounter:
     def __init__(self, implementation='reference'):
         if implementation not in ('reference','triton'):
@@ -28,26 +76,14 @@ class NonfiniteCounter:
 
     def count(self, tensors, category, scope=None):
         scope = scope or (lambda name:nullcontext())
-        reference,fast = {},{}
+        reference,fast,signatures = {},{},{}
         with scope('prepare'):
-            for value in tensors:
-                if value is None:
-                    continue
-                if self.implementation == 'reference':
-                    if value.is_floating_point() or value.is_complex():
+            if self.implementation == 'reference':
+                for value in tensors:
+                    if value is not None and (value.is_floating_point() or value.is_complex()):
                         reference.setdefault(value.device,[]).append(value.detach().reshape(-1))
-                else:
-                    # dtype/device metadata do not dispatch detach/reshape per parameter.
-                    dtype = value.dtype
-                    if not (dtype.is_floating_point or dtype.is_complex):
-                        continue
-                    if value.is_cuda and dtype in SUPPORTED and value.is_contiguous():
-                        if value.numel():
-                            fast.setdefault((value.device,dtype),[]).append(value)
-                    else:
-                        # Preserve semantics for complex values, noncontiguous views,
-                        # and CPU tensors via the original implementation.
-                        reference.setdefault(value.device,[]).append(value.detach().reshape(-1))
+            else:
+                reference,fast,signatures = prepare_direct(tensors)
         nan_count = inf_count = 0
         for values in reference.values():
             with scope('concatenate'):
@@ -64,11 +100,11 @@ class NonfiniteCounter:
             with scope('metadata'):
                 # Addresses change when zero_grad replaces grad buffers or a
                 # parameter changes storage. Rebuild instead of reading stale data.
-                signature = tuple((id(v),v.data_ptr(),v.numel()) for v in values)
+                signature = tuple(signatures[(device,dtype)])
                 key = (category,device,dtype)
                 cached = self.cache.get(key)
                 if cached is None or cached[0] != signature:
-                    metadata = torch.tensor(tile_metadata(values),dtype=torch.int64,device=device)
+                    metadata = torch.tensor(tiles_from_signature(signature),dtype=torch.int64,device=device)
                     self.cache[key] = (signature,metadata)
                 else:
                     metadata = cached[1]

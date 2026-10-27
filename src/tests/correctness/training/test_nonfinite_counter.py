@@ -4,7 +4,7 @@ import sys
 import pytest
 import torch
 
-from compressarc.train.nonfinite import NonfiniteCounter,tile_metadata
+from compressarc.train.nonfinite import NonfiniteCounter,tile_metadata,prepare_direct,tiles_from_signature
 from compressarc.train.diagnostics import TrainingDiagnostics
 
 
@@ -134,3 +134,49 @@ def test_diagnostic_detail_timings_integrate_without_changing_counts(mode):
     assert metrics['timing/host_optimizer_parameter_checks_seconds']>=sum(metrics[k] for k in fields)
     assert records[0]['numerics/nan_count']==1
     assert records[0]['numerics/inf_count']==1
+
+
+def test_metadata_guard_keeps_iterator_default_device_and_restores_dispatch():
+    made=[]
+    def source():
+        value=torch.ones(2)
+        made.append(value.device.type)
+        yield value
+    with torch.device('meta'):
+        reference,fast,signatures=prepare_direct(source())
+        assert made==['meta']
+        assert not fast and not signatures
+        assert next(iter(reference)).type=='meta'
+        assert torch.ones(1).device.type=='meta'
+    assert torch.ones(1).device.type=='cpu'
+
+
+def test_metadata_guard_restored_when_input_iterator_raises():
+    def broken():
+        yield torch.ones(1)
+        raise RuntimeError('broken iterator')
+    with torch.device('meta'):
+        with pytest.raises(RuntimeError,match='broken iterator'):
+            prepare_direct(broken())
+        assert torch.ones(1).device.type=='meta'
+
+
+def test_subclasses_keep_their_dispatch_hooks_on_fallback():
+    called=[]
+    class TrackedTensor(torch.Tensor):
+        @classmethod
+        def __torch_function__(cls,func,types,args=(),kwargs=None):
+            called.append(func.__name__)
+            return super().__torch_function__(func,types,args,kwargs or {})
+    value=torch.tensor([float('nan'),float('inf'),2.]).as_subclass(TrackedTensor)
+    called.clear()
+    assert NonfiniteCounter('triton').count([value],'parameters')==(1,1)
+    assert 'is_floating_point' in called
+    assert 'detach' in called
+
+
+def test_cached_signature_tiles_equal_original_metadata_without_tensor_rereads():
+    values=[torch.ones(1030)[2:1027],torch.ones(3),torch.empty(0)]
+    values.append(values[1])
+    signature=[(id(v),v.data_ptr(),v.numel()) for v in values]
+    assert tiles_from_signature(signature)==tile_metadata(values)

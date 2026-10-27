@@ -501,3 +501,15 @@ python src/profile_layers.py \
 Keep W&B diagnostics enabled in both runs. Turning logging off disables these
 checks and would invalidate the reference/direct comparison. Inspect clean step
 latency, parameter/gradient check detail, launch counts, and peak GPU memory.
+
+
+The direct-check mode also limits default-device dispatch overhead during
+metadata inspection. It materializes source iterators first, then temporarily
+disables TorchFunction dispatch **only for metadata reads on ordinary Tensor and
+Parameter objects**. Tensor subclass hooks, fallback views, allocations, and GPU
+operations execute with normal dispatch. Dtype/device/contiguity and storage
+signatures are collected in one pass; tile metadata is built from those integer
+signatures without reading tensor pointers again. Storage validation still occurs
+every observation. The optimization applies only to the opt-in `triton` mode.
+A local 4,000-tensor metadata microbenchmark improved from about 27 ms to 2 ms
+under default-device mode; this is not a measured full GPU training speedup.
