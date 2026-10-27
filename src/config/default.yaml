@@ -36,6 +36,7 @@ training:
   device: auto
   # off: unchanged path; wall: whole-step; phases: detailed host/CUDA stream timings.
   step_timing: "off"
+  sharing_stage_timing: false
   operator_profile: false
   operator_profile_start: 10
   operator_profile_steps: 1

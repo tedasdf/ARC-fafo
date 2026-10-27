@@ -17,6 +17,7 @@ from compressarc.train.metrics import SolutionTracker
 from compressarc.train.checkpoint import save_inference_checkpoint
 from compressarc.train.diagnostics import TrainingDiagnostics
 from compressarc.train.step_timing import StepTimer
+from compressarc.train.layer_profiling import sharing_stage_timing
 from compressarc.train.optimizer import create_optimizer
 from compressarc.train.operator_profiling import OperatorProfiler
 from compressarc.train.logging import initialize_wandb, log_training_metrics, log_final_candidates, log_model_checkpoint, RunSummary
@@ -176,13 +177,14 @@ def main(argv=None):
                     operator_profiler.before_step(train_step)
                     step_timer.start(train_step)
                     diagnostics.step = train_step
-                    last_metrics = take_step(
-                        task, model, optimizer, train_step, training_config,
-                        return_outputs=True,
-                        **({"phase_callback": mark_phase} if step_timer.mode == "phases" or profiling else {}),
-                        **({"diagnostic_callback": observe} if run is not None else {}),
-                        **({"optimizer_scope": optimizer_scope} if step_timer.mode == "phases" or profiling else {}),
-                    )
+                    with sharing_stage_timing(step_timer.scope if step_timer.mode == "phases" and training_config.get("sharing_stage_timing", False) else None):
+                        last_metrics = take_step(
+                            task, model, optimizer, train_step, training_config,
+                            return_outputs=True,
+                            **({"phase_callback": mark_phase} if step_timer.mode == "phases" or profiling else {}),
+                            **({"diagnostic_callback": observe} if run is not None else {}),
+                            **({"optimizer_scope": optimizer_scope} if step_timer.mode == "phases" or profiling else {}),
+                        )
                     mark_phase("progress")
                     progress.set_postfix(loss=f"{last_metrics['loss']:.3f}")
                     mark_phase("diagnostics")

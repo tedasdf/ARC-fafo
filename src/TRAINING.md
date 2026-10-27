@@ -513,3 +513,43 @@ signatures without reading tensor pointers again. Storage validation still occur
 every observation. The optimization applies only to the opt-in `triton` mode.
 A local 4,000-tensor metadata microbenchmark improved from about 27 ms to 2 ms
 under default-device mode; this is not a measured full GPU training speedup.
+
+
+### Measure share-up/down before changing their implementation
+
+Add `--sharing-stages` to the profiling driver to time sharing stages in the
+clean pass. During detailed capture the original layers also emit stage labels.
+No projections, masks, broadcast/reduction order, normalization, or parameters
+are changed. Stages are weight selection, source projection, communication,
+normalization, destination projection, and residual addition.
+
+Clean timings `timing/host_sharing_share_up_<stage>_seconds` (and share_down)
+aggregate forward work across model depths. CUDA-stream spans are also recorded,
+without per-stage barriers. These spans are already part of forward time; do not
+add parent and child totals. Enabling this detail introduces measurement overhead,
+so use the same flag for before/after optimization comparisons.
+
+`comparison.txt` and `.layers.json` include `sharing_stages`: kernel launches,
+GPU kernel duration, CPU operator self time, and forward host ranges. Backward
+stage attribution follows autograd sequence numbers; it is attributed operator
+work, not an isolated per-stage backward wall-clock benchmark. Missing/ambiguous
+links stay unassigned. Coverage is reported by `sharing_stage_attributed_launches`
+and `sharing_layer_launches`. Existing layer totals are retained separately.
+
+```bash
+python src/profile_layers.py \
+  --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json \
+  --task 00576224 --set training.split=evaluation \
+  --set model.direction_share_implementation=vectorized \
+  --set model.cummax_implementation=triton_hard \
+  --set model.softmax_implementation=fused \
+  --set training.optimizer_implementation=fused \
+  --set training.diagnostics_implementation=triton \
+  --sharing-stages --device cuda:0 \
+  --output-dir outputs/d4_conv_sharing_stages_profile \
+  --upload-wandb --artifact-name d4-conv-sharing-stages-profile
+```
+
+This experiment identifies whether grouped projections or communication/reduction
+fusion should be attempted next. It does not replace sharing with a dense block
+matrix or otherwise change model equations.

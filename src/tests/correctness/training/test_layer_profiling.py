@@ -77,11 +77,12 @@ def test_actual_autograd_sequence_mapping_and_no_math_change(tmp_path):
 def test_two_pass_dry_run(tmp_path):
     script = Path(__file__).resolve().parents[3]/'profile_layers.py'
     result = subprocess.run([sys.executable, str(script), '--config', str(tmp_path/'config.json'),
-                             '--task','00576224','--dry-run','--capture-steps','2','--no-shapes',
+                             '--task','00576224','--dry-run','--capture-steps','2','--no-shapes','--sharing-stages',
                              '--output-dir',str(tmp_path/'report')], capture_output=True, text=True, check=True)
     assert 'training.operator_profile=false' in result.stdout
     assert 'training.operator_profile=true' in result.stdout
     assert 'training.operator_profile_steps=2' in result.stdout
+    assert 'training.sharing_stage_timing=true' in result.stdout
     assert not (tmp_path/'report').exists()
 
 

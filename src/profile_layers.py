@@ -24,6 +24,7 @@ def main(argv=None):
     p.add_argument('--clean-steps', type=int, default=40)
     p.add_argument('--warmup-steps', type=int, default=10)
     p.add_argument('--capture-steps', type=int, default=1)
+    p.add_argument('--sharing-stages', action='store_true', help='Record clean share-up/down stage spans')
     p.add_argument('--no-shapes', action='store_true')
     p.add_argument('--profile-memory', action='store_true')
     p.add_argument('--with-stack', action='store_true')
@@ -52,6 +53,8 @@ def main(argv=None):
                      f'training.operator_profile_memory={str(args.profile_memory).lower()}',
                      f'training.operator_profile_stack={str(args.with_stack).lower()}',
                      f'experiment.name=layer_profile_{name}']
+        if args.sharing_stages:
+            overrides.append('training.sharing_stage_timing=true')
         for override in overrides:
             cmd.extend(['--set', override])
         print(subprocess.list2cmdline(cmd), flush=True)
@@ -92,6 +95,10 @@ def main(argv=None):
             'Clean phase | host seconds | CUDA-stream seconds (includes dispatch gaps)']
     for name in phase_keys:
         text.append(f"{name} | {means.get('timing/host_'+name+'_seconds',0):.6f} | {means.get('timing/stream_'+name+'_seconds',0):.6f}")
+    text += ['', 'Sharing forward stage detail (already included in forward) | host seconds | CUDA-stream seconds']
+    for key in sorted(k for k in means if k.startswith('timing/host_sharing_')):
+        name = key.removeprefix('timing/host_').removesuffix('_seconds')
+        text.append(f"{name} | {means[key]:.6f} | {means.get('timing/stream_'+name+'_seconds',0):.6f}")
     text += ['', 'Diagnostic detail (already included in parent phases) | host seconds | CUDA-stream seconds']
     for key in sorted(k for k in means if k.startswith('timing/host_numerics_')):
         name = key.removeprefix('timing/host_').removesuffix('_seconds')

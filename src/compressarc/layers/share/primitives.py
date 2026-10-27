@@ -4,6 +4,7 @@ import torch
 from ...model import multitensor_systems
 
 from ..helper import affine, normalize
+from ...train.layer_profiling import profile_share_stage
 
 
 class MultitensorShare:
@@ -28,15 +29,18 @@ class MultitensorShare:
         if direction not in (1, -1):
             raise ValueError("direction must be 1 (up) or -1 (down)")
 
-        down_project_weights = multitensor_systems.multify(
-            lambda dims, weights: weights[0]
-        )(share_weights)
-        up_project_weights = multitensor_systems.multify(
-            lambda dims, weights: weights[1]
-        )(share_weights)
+        component = 'share_up' if direction == 1 else 'share_down'
+        with profile_share_stage(component, 'weight_selection'):
+            down_project_weights = multitensor_systems.multify(
+                lambda dims, weights: weights[0]
+            )(share_weights)
+            up_project_weights = multitensor_systems.multify(
+                lambda dims, weights: weights[1]
+            )(share_weights)
 
         multitensor_system = residual.multitensor_system
-        projected = affine(residual, down_project_weights, use_bias=False)
+        with profile_share_stage(component, 'source_projection'):
+            projected = affine(residual, down_project_weights, use_bias=False)
 
         if direction == 1:
             def share(dims, _):
@@ -89,8 +93,12 @@ class MultitensorShare:
                         higher_xs.append(higher_x)
                 return sum(higher_xs)
 
-        communicated = multitensor_systems.multify(share)(projected)
-        communicated = normalize(communicated)
-        communicated = affine(communicated, up_project_weights, use_bias=False)
-        return multitensor_systems.multify(lambda dims, x, y: x + y)(residual, communicated)
+        with profile_share_stage(component, 'communication'):
+            communicated = multitensor_systems.multify(share)(projected)
+        with profile_share_stage(component, 'normalization'):
+            communicated = normalize(communicated)
+        with profile_share_stage(component, 'destination_projection'):
+            communicated = affine(communicated, up_project_weights, use_bias=False)
+        with profile_share_stage(component, 'residual'):
+            return multitensor_systems.multify(lambda dims, x, y: x + y)(residual, communicated)
 
