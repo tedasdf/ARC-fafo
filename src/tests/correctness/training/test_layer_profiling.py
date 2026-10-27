@@ -83,3 +83,17 @@ def test_two_pass_dry_run(tmp_path):
     assert 'training.operator_profile=true' in result.stdout
     assert 'training.operator_profile_steps=2' in result.stdout
     assert not (tmp_path/'report').exists()
+
+
+def test_artifact_upload_targets_reports_and_uses_online_mode(tmp_path, monkeypatch):
+    import profile_layers
+    calls = []
+    monkeypatch.setenv('WANDB_MODE', 'offline')
+    monkeypatch.setattr(profile_layers.subprocess, 'run', lambda cmd, **kw:calls.append((cmd,kw)))
+    profile_layers.upload_profile(tmp_path, 'arc_agi', 'compressarc-final-ablation', 'd4-conv-layer-profile')
+    cmd, kwargs = calls[0]
+    assert cmd == [sys.executable, '-m', 'wandb', 'artifact', 'put', str(tmp_path),
+                   '--name', 'compressarc-final-ablation/d4-conv-layer-profile', '--type', 'profile']
+    assert kwargs['check'] is True
+    assert kwargs['env']['WANDB_ENTITY'] == 'arc_agi'
+    assert kwargs['env']['WANDB_MODE'] == 'online'

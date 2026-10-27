@@ -1,9 +1,18 @@
 """Run clean latency and detailed layer profiling as separate training passes."""
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+
+def upload_profile(root, entity, project, name):
+    # Use the installed CLI so upload progress and the final artifact link are visible.
+    cmd = [sys.executable, '-m', 'wandb', 'artifact', 'put', str(root),
+           '--name', f'{project}/{name}', '--type', 'profile']
+    env = dict(os.environ, WANDB_ENTITY=entity, WANDB_MODE='online')
+    subprocess.run(cmd, env=env, check=True)
 
 
 def main(argv=None):
@@ -20,6 +29,10 @@ def main(argv=None):
     p.add_argument('--with-stack', action='store_true')
     p.add_argument('--output-dir', type=Path, default=Path('outputs/d4_conv_layer_profile'))
     p.add_argument('--dry-run', action='store_true')
+    p.add_argument('--upload-wandb', action='store_true', help='Upload reports and traces after both passes succeed')
+    p.add_argument('--wandb-entity', default='arc_agi')
+    p.add_argument('--wandb-project', default='compressarc-final-ablation')
+    p.add_argument('--artifact-name', default='d4-conv-layer-profile')
     args = p.parse_args(argv)
     if args.clean_steps <= args.warmup_steps or args.warmup_steps < 1 or args.capture_steps < 1:
         p.error('clean-steps must exceed positive warmup-steps; capture-steps must be positive')
@@ -75,6 +88,8 @@ def main(argv=None):
     text += ['', Path(str(prefix)+'.layers.txt').read_text(), '', 'Options to test, selected using the measured bottleneck:', *report['optimization_options']]
     (root/'comparison.txt').write_text('\n'.join(text)+'\n', encoding='utf-8')
     print('\n'.join(text), flush=True)
+    if args.upload_wandb:
+        upload_profile(root, args.wandb_entity, args.wandb_project, args.artifact_name)
 
 
 if __name__ == '__main__':

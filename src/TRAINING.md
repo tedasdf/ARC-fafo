@@ -271,3 +271,12 @@ WANDB_ENTITY=arc_agi WANDB_MODE=online python -m wandb artifact put \
   outputs/d4_conv_layer_profile \
   --name compressarc-final-ablation/d4-conv-layer-profile --type profile
 ```
+
+
+To upload the complete report directory automatically after both profiling
+passes succeed, add `--upload-wandb` to `src/profile_layers.py`. The default
+artifact is `arc_agi/compressarc-final-ablation/d4-conv-layer-profile`, type
+`profile`. Optional flags: `--wandb-entity`, `--wandb-project`, `--artifact-name`.
+The upload uses online mode and prints the W&B link. Upload failure preserves
+all local outputs; retry with the standalone artifact command above rather than
+rerunning training. Upload is outside the measured training intervals.
