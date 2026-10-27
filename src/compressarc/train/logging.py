@@ -21,6 +21,8 @@ def initialize_wandb(config, task):
         tags.append("D4-conv")
     if config.get("model", {}).get("direction_share_implementation") == "vectorized":
         tags.append("direction-share-vectorized")
+    if config.get("model", {}).get("cummax_implementation") == "triton_hard":
+        tags.append("cummax-triton-hard")
     step_timing = config.get("training", {}).get("step_timing", "off")
     if config.get("training", {}).get("operator_profile", False):
         tags.append("operator-profile")

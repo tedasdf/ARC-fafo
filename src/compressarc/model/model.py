@@ -121,7 +121,8 @@ class ARCCompressor:
         for name in ("cummax", "shift", "direction_share"):
             implementation = getattr(self.config, f"{name}_implementation")
             options = {}
-            projected = implementation != "primitives" and not (name == "direction_share" and implementation == "vectorized")
+            projected = implementation != "primitives" and (name, implementation) not in {
+                ("direction_share", "vectorized"), ("cummax", "triton_hard")}
             if projected:
                 options["n_layers"] = self.n_layers
                 if name == "cummax":

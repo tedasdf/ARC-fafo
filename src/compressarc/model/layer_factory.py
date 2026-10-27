@@ -29,6 +29,17 @@ def create_triton_cummax(**kwargs):
     return LSELayer(model_type=TritonMorphologicalMax, **kwargs)
 
 
+def create_triton_hard_cummax(**kwargs):
+    """Hard primitive acceleration; separate from the trainable Triton LSE."""
+    try:
+        from ..layers.cummax.triton_hard import TritonHardCummax
+    except ModuleNotFoundError as error:
+        if error.name == "triton":
+            raise RuntimeError("Hard Triton cummax requires Triton on Linux with CUDA.") from error
+        raise
+    return TritonHardCummax(**kwargs)
+
+
 def create_triton_shift(**kwargs):
     try:
         from ..layers.shift.triton_op import TritonTiedDirectionalConv
@@ -56,6 +67,7 @@ class LayerFactory:
             },
             "cummax": {
                 "primitives": CummaxPrimitives,
+                "triton_hard": create_triton_hard_cummax,
                 "d4": partial(LSELayer, model_type=MorphologicalMax),
                 "optimised": partial(LSELayer, model_type=OptimisedMax),
                 "triton": create_triton_cummax,

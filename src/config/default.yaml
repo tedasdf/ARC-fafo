@@ -13,7 +13,7 @@ model:
   # shift: primitives | c4_tied_conv | d4_tied_conv | tied_conv (legacy C4 alias) | unfold | triton
   # C4 conv/unfold/Triton enforce rotations; d4_tied_conv also enforces reflections.
   shift_implementation: primitives
-  # cummax: primitives | d4 (reference LSE) | optimised | triton (GPU axis + diagonal)
+  # cummax: primitives | triton_hard (hard max) | d4 (LSE) | optimised (LSE) | triton (LSE)
   cummax_implementation: primitives
   lse_tau: 0.1
   layer_timing: false

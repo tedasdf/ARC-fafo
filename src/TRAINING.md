@@ -315,3 +315,42 @@ profiling if desired:
 ```bash
 python -m pytest src/tests/correctness/layers/direction_share/test_direction_share_vectorization_contract.py -q
 ```
+
+
+### Experimental hard-cummax Triton backend
+
+`model.cummax_implementation=triton_hard` accelerates the original **hard max**
+primitive. It is separate from `triton`, which remains the learned LSE backend.
+There are no learned scan kernel weights to freeze; surrounding projection
+weights still train. Masks, original normalization constants, directional
+orientation/channel ordering, first-tie max/min reductions, latest-tie cardinal
+cummax, and the diagonal tree's half-gradient tie routing are retained.
+
+V1: finite FP32 CUDA inputs, fixed FP32 masks, first-order gradients, cardinal
+axis lengths up to 128. Rectangular and singleton grids are supported. Diagonal
+backward saves max/min histories (O(log(min(H,W))) full grids), so check peak
+memory. Cardinal backward gathers contributions without atomics, trading extra
+arithmetic for fewer launches. Speedup is not established. No defaults change.
+
+**Run the CUDA contracts before profiling or full training.** Development on the
+local CPU checked syntax/reference regressions; it did not compile/run Triton.
+
+```bash
+python -m pytest src/tests/correctness/layers/lse/test_hard_cummax_triton.py -q -x
+```
+
+Only after those pass, compare on the same GPU as the vectorized baseline:
+
+```bash
+python src/profile_layers.py \
+  --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json \
+  --task 00576224 --set training.split=evaluation \
+  --set model.direction_share_implementation=vectorized \
+  --set model.cummax_implementation=triton_hard \
+  --device cuda:0 --output-dir outputs/d4_conv_hard_triton_profile \
+  --upload-wandb --artifact-name d4-conv-hard-cummax-profile
+```
+
+These runs receive the W&B tag `cummax-triton-hard`. Compare clean full-step
+latency, cummax forward/backward GPU duration, launch count, and peak memory.
+A successful forward alone is insufficient: the gradient and tie cases must pass.
