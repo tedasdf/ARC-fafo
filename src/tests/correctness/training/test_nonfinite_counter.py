@@ -82,6 +82,8 @@ def test_cuda_exact_counts_readonly_and_mixed_fallbacks(cuda_counter,dtype):
     x=torch.ones(4099,device='cuda',dtype=dtype,requires_grad=True)
     with torch.no_grad():
         x[0]=float('nan');x[1023]=float('inf');x[1024]=float('-inf');x[-1]=float('nan')
+        limit=torch.finfo(dtype)
+        x[4:9]=torch.tensor([limit.max,-limit.max,limit.tiny,-limit.tiny,0.],device='cuda',dtype=dtype)
     x.grad=torch.ones_like(x)
     grad=x.grad.clone()
     view=torch.tensor([[1.,float('nan')],[float('inf'),4.]],device='cuda').T
