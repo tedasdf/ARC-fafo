@@ -59,7 +59,8 @@ def test_nonfinite_checks_only_emit_events_and_always_summarize():
     assert run.summary["numerics/nan_detected"] and run.summary["numerics/inf_detected"]
 
 
-def test_diagnostics_preserve_loss_gradients_and_optimizer_update():
+@pytest.mark.parametrize("implementation", ["reference", "triton"])
+def test_diagnostics_preserve_loss_gradients_and_optimizer_update(implementation):
     previous_threads=torch.get_num_threads()
     torch.set_num_threads(1)
     try:
@@ -79,7 +80,7 @@ def test_diagnostics_preserve_loss_gradients_and_optimizer_update():
         expected=take_step(task,models[0],optimizers[0],49,config.training)
         torch.manual_seed(33)
         run,records=recording_run()
-        with TrainingDiagnostics(run,models[1],task) as diag:
+        with TrainingDiagnostics(run,models[1],task,implementation=implementation) as diag:
             diag.step=49
             actual=take_step(task,models[1],optimizers[1],49,config.training,diagnostic_callback=diag.observe)
             diag.after_step()

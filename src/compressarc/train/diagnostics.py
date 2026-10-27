@@ -1,10 +1,13 @@
 """Read-only kernel norm and numerical diagnostics."""
+from contextlib import nullcontext
 import torch
+from .nonfinite import NonfiniteCounter
 
 
 class TrainingDiagnostics:
-    def __init__(self, run, model, task):
+    def __init__(self, run, model, task, implementation="reference"):
         self.run,self.model,self.task = run,model,task
+        self.counter = NonfiniteCounter(implementation)
         self.step = -1
         self.kernels,self.initial = {},{}
         self.nonfinite_steps = set()
@@ -22,6 +25,7 @@ class TrainingDiagnostics:
     def __enter__(self):
         if self.run is not None:
             self.run.summary["kernels/parameter_tensor_count"] = len(self.kernels)
+            self.run.summary["numerics/implementation"] = self.counter.implementation
         return self
 
     def __exit__(self, error_type, error, traceback):
@@ -36,19 +40,11 @@ class TrainingDiagnostics:
                 self.run.summary["numerics/first_nonfinite_step"] = min(self.nonfinite_steps)+1
         return False
 
-    def observe(self, category, tensors):
+    def observe(self, category, tensors, scope=None):
         if self.run is None:
             return
-        groups = {}
-        for value in tensors:
-            if value is not None and (value.is_floating_point() or value.is_complex()):
-                groups.setdefault(value.device,[]).append(value.detach().reshape(-1))
-        nan_count = inf_count = 0
-        for values in groups.values():
-            flattened = torch.cat(values)
-            counts = torch.stack((torch.isnan(flattened).sum(),torch.isinf(flattened).sum())).cpu().tolist()
-            nan_count += counts[0]
-            inf_count += counts[1]
+        scope = scope or (lambda name:nullcontext())
+        nan_count,inf_count = self.counter.count(tensors,category,scope)
         if nan_count or inf_count:
             self.nonfinite_steps.add(self.step)
             self.event_count += 1

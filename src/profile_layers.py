@@ -70,6 +70,7 @@ def main(argv=None):
     from config import load_config
     effective_config = load_config(args.config, args.overrides)
     report = dict(task=args.task, optimizer_implementation=effective_config.training.get('optimizer_implementation', 'default'),
+                  diagnostics_implementation=effective_config.training.get('diagnostics_implementation', 'reference'),
                   warmup_steps=args.warmup_steps,
                   measured_clean_steps=len(clean), clean_mean_seconds=statistics.mean(latencies),
                   clean_median_seconds=statistics.median(latencies), clean_phase_means=means,
@@ -91,6 +92,10 @@ def main(argv=None):
             'Clean phase | host seconds | CUDA-stream seconds (includes dispatch gaps)']
     for name in phase_keys:
         text.append(f"{name} | {means.get('timing/host_'+name+'_seconds',0):.6f} | {means.get('timing/stream_'+name+'_seconds',0):.6f}")
+    text += ['', 'Diagnostic detail (already included in parent phases) | host seconds | CUDA-stream seconds']
+    for key in sorted(k for k in means if k.startswith('timing/host_numerics_')):
+        name = key.removeprefix('timing/host_').removesuffix('_seconds')
+        text.append(f"{name} | {means[key]:.6f} | {means.get('timing/stream_'+name+'_seconds',0):.6f}")
     text += ['', Path(str(prefix)+'.layers.txt').read_text(), '', 'Options to test, selected using the measured bottleneck:', *report['optimization_options']]
     (root/'comparison.txt').write_text('\n'.join(text)+'\n', encoding='utf-8')
     print('\n'.join(text), flush=True)

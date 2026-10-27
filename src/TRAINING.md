@@ -447,3 +447,57 @@ python src/profile_layers.py \
 `comparison.txt` shows clean full-step and optimizer subphase timings. Each run
 contains a clean pass and a separate short instrumented capture. Compare latency
 and peak memory on multiple task sizes before using fused mode for a large batch.
+
+
+### Direct-tensor numerical checks and diagnostic detail
+
+`training.diagnostics_implementation=reference` retains the original numerical
+checks. `triton` scans contiguous CUDA float16/bfloat16/float32/float64 tensors
+through pointer-table metadata instead of creating per-tensor detached views and
+concatenating their values. Each scan counts NaN and Inf elements separately;
+aliases/duplicate list entries are still counted repeatedly, exactly as before.
+Checks run every step, emit events only on detection, and preserve final summaries
+and the existing kernel-norm cadence. They never modify parameters or gradients.
+CPU tensors, complex values, and noncontiguous layouts use the reference path.
+
+Metadata is reused only while object identity, storage address, and element count
+match; replaced grad buffers or changed parameter storage rebuild it. Source
+tensors stay alive through the count transfer. Cache entries hold metadata, not
+old gradient tensors. There is no full parameter-data concatenation on the fast
+path, but count partials and metadata still allocate some memory. Speedup is not
+assumed. The local machine cannot compile/test the CUDA kernel.
+
+With phase timing, `comparison.txt` now separates `numerics_<category>_prepare`,
+`concatenate` (reference/fallback), `metadata` (fast path), `reduce`, and `transfer`.
+Categories are outputs, loss, gradients, and parameters. Host/stream spans overlap
+and these detail spans are already included in their parent training phase.
+No extra explicit synchronization barriers are added. W&B tags the direct-scan
+mode `numerics-triton`; `numerics/implementation` also records the selected mode.
+
+Validate GPU contracts before profiling:
+
+```bash
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python -m pytest src/tests/correctness/training/test_nonfinite_counter.py -q -x
+```
+
+First rerun the previous profiling command with
+`--set training.diagnostics_implementation=reference` to measure the detailed
+reference costs. Then run the fast path, holding all other settings fixed:
+
+```bash
+python src/profile_layers.py \
+  --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json \
+  --task 00576224 --set training.split=evaluation \
+  --set model.direction_share_implementation=vectorized \
+  --set model.cummax_implementation=triton_hard \
+  --set model.softmax_implementation=fused \
+  --set training.optimizer_implementation=fused \
+  --set training.diagnostics_implementation=triton \
+  --device cuda:0 --output-dir outputs/d4_conv_direct_checks_profile \
+  --upload-wandb --artifact-name d4-conv-direct-checks-profile
+```
+
+Keep W&B diagnostics enabled in both runs. Turning logging off disables these
+checks and would invalidate the reference/direct comparison. Inspect clean step
+latency, parameter/gradient check detail, launch counts, and peak GPU memory.

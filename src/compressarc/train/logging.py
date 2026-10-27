@@ -27,6 +27,8 @@ def initialize_wandb(config, task):
         tags.append("softmax-fused")
     if config.get("training", {}).get("optimizer_implementation", "default") == "fused":
         tags.append("adam-fused")
+    if config.get("training", {}).get("diagnostics_implementation", "reference") == "triton":
+        tags.append("numerics-triton")
     step_timing = config.get("training", {}).get("step_timing", "off")
     if config.get("training", {}).get("operator_profile", False):
         tags.append("operator-profile")

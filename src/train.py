@@ -140,7 +140,8 @@ def main(argv=None):
             profiling = training_config.get("operator_profile", False)
             if profiling and training_config.iterations < training_config.get("operator_profile_start", 10) + training_config.get("operator_profile_steps", 1):
                 raise ValueError("Training iterations must cover the requested operator profiling window")
-            with TrainingDiagnostics(run, model, task) as diagnostics, OperatorProfiler(
+            with TrainingDiagnostics(run, model, task,
+                implementation=training_config.get("diagnostics_implementation", "reference")) as diagnostics, OperatorProfiler(
                 device_object, args.output_dir / f"{task.task_name}.operators",
                 enabled=profiling, start_step=training_config.get("operator_profile_start", 10),
                 steps=training_config.get("operator_profile_steps", 1),
@@ -156,8 +157,13 @@ def main(argv=None):
                     operator_profiler.mark(name)
 
                 def observe(category, tensors):
+                    @contextmanager
+                    def detail_scope(name):
+                        with step_timer.scope("numerics_"+category+"_"+name), operator_profiler.scope("numerics/"+category+"/"+name):
+                            yield
                     with operator_profiler.scope("numerics/"+category):
-                        diagnostics.observe(category, tensors)
+                        diagnostics.observe(category, tensors,
+                            scope=detail_scope if step_timer.mode == "phases" or profiling else None)
 
                 @contextmanager
                 def optimizer_scope(name):

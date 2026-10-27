@@ -94,12 +94,12 @@ class StepTimer:
         self.phase_started, self.phase_event = now, event
 
     @contextmanager
-    def optimizer_scope(self, name):
-        """Nested spans within optimizer; add no CUDA synchronization barriers."""
+    def scope(self, name):
+        """Nested span; adds CUDA events but no synchronization barriers."""
         if self.mode != 'phases':
             yield
             return
-        key = 'optimizer_' + name
+        key = name
         started, event = self.clock(), self._event()
         try:
             yield
@@ -108,6 +108,9 @@ class StepTimer:
             self.host[key] = self.host.get(key, 0) + ended-started
             if event is not None:
                 self.events.append((key, event, end_event))
+
+    def optimizer_scope(self, name):
+        return self.scope('optimizer_' + name)
 
     def finish(self):
         if not self.enabled:
