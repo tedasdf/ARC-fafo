@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from pathlib import Path
 
 import torch
+from .layer_profiling import active_layer_profile
 
 
 PHASES = {'forward', 'loss', 'backward', 'optimizer', 'metrics',
@@ -68,6 +69,7 @@ class OperatorProfiler:
                                                    profile_memory=self.profile_memory, with_stack=self.with_stack)
             self.profiler.__enter__()
             self.active = True
+            self.layer_token = active_layer_profile.set(True)
         self.current_step = step
 
     def mark(self, phase):
@@ -114,6 +116,8 @@ class OperatorProfiler:
         self._close_phase()
         self.profiler.__exit__(*error)
         self.active = False
+        if hasattr(self, "layer_token"):
+            active_layer_profile.reset(self.layer_token)
         self.profiler.export_chrome_trace(str(self._path('.trace.json')))
         averages = self.profiler.key_averages(group_by_input_shape=self.record_shapes)
         self._path('.cpu.txt').write_text(averages.table(sort_by='self_cpu_time_total', row_limit=50), encoding='utf-8')
@@ -146,6 +150,8 @@ class OperatorProfiler:
         self._path('.by_phase.json').write_text(json.dumps(by_phase, indent=2), encoding='utf-8')
         kernel_rows = sorted([dict(kernel=k, **v) for k,v in kernels.items()], key=lambda r:r['duration_us'], reverse=True)
         self._path('.kernels.json').write_text(json.dumps(kernel_rows, indent=2), encoding='utf-8')
+        from .profile_analysis import analyze_trace
+        analyze_trace(self._path('.trace.json'), self.prefix)
         self._manifest('complete' if len(self.captured)==self.steps else 'partial')
         self.exported = True
         print(f'Operator profile saved: {self.prefix}.*', flush=True)

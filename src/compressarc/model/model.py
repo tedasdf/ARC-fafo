@@ -1,6 +1,7 @@
 """ARC compressor model configuration, parameter construction, and forward pass."""
 
 from config import load_config
+from ..train.layer_profiling import profile_layer
 from .initializers import Initializer
 from .initialization.latent import initialize_latent_weights
 from .initialization.layers import initialize_layer_weights
@@ -138,65 +139,75 @@ class ARCCompressor:
                 self.weights_list.extend(layer.parameters())
 
     def forward(self):
-        x, kl_amounts, kl_names = self.latent_decoder(
-            self.target_capacities,
-            self.decode_weights,
-            self.multiposteriors,
-        )
+        with profile_layer("latent_decoder"):
+            x, kl_amounts, kl_names = self.latent_decoder(
+                self.target_capacities,
+                self.decode_weights,
+                self.multiposteriors,
+            )
 
         masks = self.multitensor_system.task.masks
         for layer_num in range(self.n_layers):
             weights = self.layer_weights[layer_num]
 
-            x = self.share.share_up(x, weights["share_up"])
-            x = softmax(
-                x,
-                weights["softmax"],
-                pre_norm=False,
-                post_norm=False,
-                use_bias=False,
-            )
-            x = self.cummax(
-                x,
-                weights["cummax"],
-                masks,
-                pre_norm=False,
-                post_norm=True,
-                use_bias=False,
-                **({"layer_index": layer_num} if self._layer_call_options["cummax"] else {}),
-            )
-            x = self.shift(
-                x,
-                weights["shift"],
-                masks,
-                pre_norm=False,
-                post_norm=True,
-                use_bias=False,
-                **({"layer_index": layer_num} if self._layer_call_options["shift"] else {}),
-            )
-            x = self.direction_share(
-                x,
-                weights["direction_share"],
-                pre_norm=True,
-                use_bias=False,
-                **({"layer_index": layer_num} if self._layer_call_options["direction_share"] else {}),
-            )
-            x = nonlinear(
-                x,
-                weights["nonlinear"],
-                pre_norm=False,
-                post_norm=False,
-                use_bias=False,
-            )
-            x = self.share.share_down(x, weights["share_down"])
-            x = normalize(x)
+            with profile_layer(f"depth_{layer_num}/share_up"):
+                x = self.share.share_up(x, weights["share_up"])
+            with profile_layer(f"depth_{layer_num}/softmax"):
+                x = softmax(
+                    x,
+                    weights["softmax"],
+                    pre_norm=False,
+                    post_norm=False,
+                    use_bias=False,
+                )
+            with profile_layer(f"depth_{layer_num}/cummax"):
+                x = self.cummax(
+                    x,
+                    weights["cummax"],
+                    masks,
+                    pre_norm=False,
+                    post_norm=True,
+                    use_bias=False,
+                    **({"layer_index": layer_num} if self._layer_call_options["cummax"] else {}),
+                )
+            with profile_layer(f"depth_{layer_num}/shift"):
+                x = self.shift(
+                    x,
+                    weights["shift"],
+                    masks,
+                    pre_norm=False,
+                    post_norm=True,
+                    use_bias=False,
+                    **({"layer_index": layer_num} if self._layer_call_options["shift"] else {}),
+                )
+            with profile_layer(f"depth_{layer_num}/direction_share"):
+                x = self.direction_share(
+                    x,
+                    weights["direction_share"],
+                    pre_norm=True,
+                    use_bias=False,
+                    **({"layer_index": layer_num} if self._layer_call_options["direction_share"] else {}),
+                )
+            with profile_layer(f"depth_{layer_num}/nonlinear"):
+                x = nonlinear(
+                    x,
+                    weights["nonlinear"],
+                    pre_norm=False,
+                    post_norm=False,
+                    use_bias=False,
+                )
+            with profile_layer(f"depth_{layer_num}/share_down"):
+                x = self.share.share_down(x, weights["share_down"])
+            with profile_layer(f"depth_{layer_num}/normalize"):
+                x = normalize(x)
 
-        output, x_mask, y_mask = self.output_heads(
-            x,
-            self.head_weights,
-            self.mask_weights,
-            self.multitensor_system.task,
-        )
+        with profile_layer("output_heads"):
+            output, x_mask, y_mask = self.output_heads(
+                x,
+                self.head_weights,
+                self.mask_weights,
+                self.multitensor_system.task,
+            )
         return output, x_mask, y_mask, kl_amounts, kl_names
 
 

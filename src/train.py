@@ -149,7 +149,7 @@ def main(argv=None):
                 profile_memory=training_config.get("operator_profile_memory", False),
                 with_stack=training_config.get("operator_profile_stack", False),
             ) as operator_profiler, StepTimer(
-                device_object, "off" if profiling else training_config.get("step_timing", "off"),
+                device_object, "phases" if profiling else training_config.get("step_timing", "off"),
                 args.output_dir / f"{task.task_name}.step_timing.jsonl",
             ) as step_timer:
                 def mark_phase(name):
@@ -180,7 +180,10 @@ def main(argv=None):
                     tracker.update(train_step, last_metrics["outputs"])
                     mark_phase("logging")
                     log_training_metrics(run, task, tracker, train_step, last_metrics)
-                    step_timer.publish(step_timer.finish(), run)
+                    step_times = step_timer.finish()
+                    if profiling:
+                        step_times["timing/operator_profile_active"] = operator_profiler.active
+                    step_timer.publish(step_times, run)
                     operator_profiler.after_step(train_step)
 
                 if args.save_checkpoints or run is not None:

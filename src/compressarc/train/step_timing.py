@@ -57,6 +57,12 @@ class StepTimer:
                 selected = self.rows[10:] or self.rows
                 report['steady_mean_host_phase_seconds'] = {
                     k:statistics.mean(r.get(k, 0) for r in selected) for k in keys}
+            captured = [r for r in self.rows if r.get('timing/operator_profile_active', False)]
+            if any('timing/operator_profile_active' in r for r in self.rows):
+                report['contains_operator_profile'] = bool(captured)
+                report['instrumented_step_count'] = len(captured)
+                report['instrumented_mean_step_seconds'] = (statistics.mean(r['timing/step_seconds'] for r in captured) if captured else None)
+                report['note'] += ' This run contains an operator capture; use the separate clean pass for baseline latency.'
             summary = self.path.with_suffix('.summary.json')
             summary.write_text(json.dumps(report, indent=2), encoding='utf-8')
 

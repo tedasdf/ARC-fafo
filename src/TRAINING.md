@@ -190,8 +190,9 @@ The public ARC-AGI-1 evaluation fixture above shares the same task ID/inputs as 
 
 Use a separate short run to inspect forward/backward operators. This instruments
 normal training, including candidate tracking and enabled W&B diagnostics. It
-captures zero-based step 10 by default, after ten warmup steps, and disables
-StepTimer so profiler overhead cannot be mistaken for normal latency.
+captures zero-based step 10 by default, after ten warmup steps, and records
+phase wall/stream timings with `timing/operator_profile_active` marking capture steps.
+Use a separate clean pass for baseline latency; instrumented times contain overhead.
 
 ```bash
 python src/train.py \
@@ -217,3 +218,56 @@ Optional overrides: `training.operator_profile_start=10`,
 `training.operator_profile_memory=false`, and `training.operator_profile_stack=false`.
 Shape, stack, and memory instrumentation add overhead. GPU tracing requires a
 working PyTorch/CUPTI installation. CPU tests do not verify CUDA tracing.
+
+
+### Layer contribution and forward/backward comparison
+
+From the repository root, run two independent, identically seeded passes:
+
+```bash
+python src/profile_layers.py \
+  --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json \
+  --task 00576224 --set training.split=evaluation \
+  --device cuda:0 --clean-steps 40 --warmup-steps 10 --capture-steps 1 \
+  --output-dir outputs/d4_conv_layer_profile
+```
+
+The first pass records full training-step wall latency and host/CUDA-stream
+phase spans without PyTorch Profiler. The second warms up the same model anew,
+then captures the requested steps with labels for latent decoding, every depth's
+share-up, softmax, cummax, shift, direction sharing, nonlinearity, share-down,
+normalization, and output heads. Numerical checks run if W&B is enabled in the
+configuration, exactly as in normal training. W&B run names are distinct:
+`layer_profile_clean` and `layer_profile_profile`. Profiling outputs are local;
+upload the directory explicitly if desired.
+
+Read `comparison.txt` first: it contains clean latency/phase means plus a layer
+ranking from the instrumented capture. Machine-readable results are in
+`comparison.json`, `profile/<task>.operators.layers.json`, and `.layers.csv`.
+The layer reports count actual GPU kernel records linked to originating CPU
+operations by trace IDs. They also count scalar reads and synchronization APIs,
+with host duration. They exclude GPU user annotations from GPU execution totals.
+Backward attribution follows autograd sequence numbers across worker threads;
+ambiguous or missing links remain `unassigned`, and coverage is reported.
+
+Forward label wall times include Python dispatch and waits. Backward layer CPU
+self time is attributed operator time, not isolated per-layer elapsed latency.
+GPU kernel durations exclude dispatch gaps; CUDA-stream spans include them.
+CPU/GPU times overlap, so do not add them. No per-layer CUDA barriers are added.
+Step timing adds boundary barriers: synchronization counts include these and
+should not automatically be blamed on the model. Inspect counts and time together.
+
+Options: `--no-shapes` reduces instrumentation, `--profile-memory` investigates
+allocation, and `--with-stack` requests supported CPU stacks (some PyTorch builds
+lack stack data). `--set` passes normal configuration overrides, e.g.
+`--set logging.wandb=false` for a run without production W&B diagnostics; do not
+compare that latency directly with a diagnostics-enabled baseline. For meaningful
+before/after optimization, keep task, seed, layers, GPU, diagnostics, and settings
+identical. The driver prints several optimization experiments to consider; it
+does not change operators, optimizer settings, or mathematical behaviour.
+
+```bash
+WANDB_ENTITY=arc_agi WANDB_MODE=online python -m wandb artifact put \
+  outputs/d4_conv_layer_profile \
+  --name compressarc-final-ablation/d4-conv-layer-profile --type profile
+```
