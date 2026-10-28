@@ -37,6 +37,8 @@ training:
   diagnostics_implementation: reference
   seed: 0
   device: auto
+  # global: original default-device mode; explicit: disable it after setup.
+  runtime_device_dispatch: global
   # off: unchanged path; wall: whole-step; phases: detailed host/CUDA stream timings.
   step_timing: "off"
   sharing_stage_timing: false

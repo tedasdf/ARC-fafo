@@ -605,3 +605,35 @@ Then change `reuse` to `batched`, using a distinct output directory and artifact
 name (`d4_conv_share_batched_profile` / `d4-conv-share-batched-profile`). Compare
 clean latency, communication forward/backward launches, and peak GPU memory.
 Batching may lose to reuse alone when copying costs outweigh launch savings.
+
+### Runtime device dispatch experiment
+
+`training.runtime_device_dispatch=explicit` removes PyTorch's global default-device
+mode after task/model/optimizer setup. Runtime factories use tensor-derived or
+explicit devices; tensor-subclass dispatch and autograd stay enabled. The prior
+default device is restored on normal completion and exceptions. The default
+`global` retains the original path. This changes dispatch overhead, not equations.
+
+CPU tests compare three real training steps, including outputs, weights, gradients
+and RNG state. CUDA cases also exercise fused Adam and hard Triton cummax; run
+those on M3 before measuring performance. A 0.15 s step time is a target, not a
+verified result. Compare the same task and GPU against the 0.349 s reuse baseline.
+
+```bash
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python -m pytest src/tests/correctness/training/test_device_dispatch.py -q -x
+
+python src/profile_layers.py \
+  --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json \
+  --task 00576224 --set training.split=evaluation \
+  --set model.direction_share_implementation=vectorized \
+  --set model.cummax_implementation=triton_hard \
+  --set model.softmax_implementation=fused \
+  --set model.share_implementation=reuse \
+  --set training.optimizer_implementation=fused \
+  --set training.diagnostics_implementation=triton \
+  --set training.runtime_device_dispatch=explicit \
+  --sharing-stages --device cuda:0 \
+  --output-dir outputs/d4_conv_explicit_dispatch_profile \
+  --upload-wandb --artifact-name d4-conv-explicit-dispatch-profile
+```

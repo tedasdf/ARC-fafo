@@ -19,6 +19,7 @@ from compressarc.train.diagnostics import TrainingDiagnostics
 from compressarc.train.step_timing import StepTimer
 from compressarc.train.layer_profiling import sharing_stage_timing
 from compressarc.train.optimizer import create_optimizer
+from compressarc.train.device_dispatch import runtime_device_dispatch
 from compressarc.train.operator_profiling import OperatorProfiler
 from compressarc.train.logging import initialize_wandb, log_training_metrics, log_final_candidates, log_model_checkpoint, RunSummary
 
@@ -128,96 +129,97 @@ def main(argv=None):
             optimizer = setup_call("setup/optimizer_ms", lambda: create_optimizer(
                 model.weights_list, training_config))
             tracker = SolutionTracker(task)
-            if timing is not None:
-                timing.finish_setup()
-            if timing is not None:
-                result = timing.train(task, model, optimizer, training_config, take_step)
-                print(json.dumps({"task": task.task_name,
-                                  "configuration": config.get("experiment", {}).get(
-                                      "name", Path(args.config).stem if args.config else "default"),
-                                  "pass": args.benchmark_pass, "metrics": result}, indent=2))
-                return result
+            with runtime_device_dispatch(training_config.get("runtime_device_dispatch", "global")):
+                if timing is not None:
+                    timing.finish_setup()
+                if timing is not None:
+                    result = timing.train(task, model, optimizer, training_config, take_step)
+                    print(json.dumps({"task": task.task_name,
+                                      "configuration": config.get("experiment", {}).get(
+                                          "name", Path(args.config).stem if args.config else "default"),
+                                      "pass": args.benchmark_pass, "metrics": result}, indent=2))
+                    return result
 
-            profiling = training_config.get("operator_profile", False)
-            if profiling and training_config.iterations < training_config.get("operator_profile_start", 10) + training_config.get("operator_profile_steps", 1):
-                raise ValueError("Training iterations must cover the requested operator profiling window")
-            with TrainingDiagnostics(run, model, task,
-                implementation=training_config.get("diagnostics_implementation", "reference")) as diagnostics, OperatorProfiler(
-                device_object, args.output_dir / f"{task.task_name}.operators",
-                enabled=profiling, start_step=training_config.get("operator_profile_start", 10),
-                steps=training_config.get("operator_profile_steps", 1),
-                record_shapes=training_config.get("operator_profile_shapes", True),
-                profile_memory=training_config.get("operator_profile_memory", False),
-                with_stack=training_config.get("operator_profile_stack", False),
-            ) as operator_profiler, StepTimer(
-                device_object, "phases" if profiling else training_config.get("step_timing", "off"),
-                args.output_dir / f"{task.task_name}.step_timing.jsonl",
-            ) as step_timer:
-                def mark_phase(name):
-                    step_timer.mark(name)
-                    operator_profiler.mark(name)
+                profiling = training_config.get("operator_profile", False)
+                if profiling and training_config.iterations < training_config.get("operator_profile_start", 10) + training_config.get("operator_profile_steps", 1):
+                    raise ValueError("Training iterations must cover the requested operator profiling window")
+                with TrainingDiagnostics(run, model, task,
+                    implementation=training_config.get("diagnostics_implementation", "reference")) as diagnostics, OperatorProfiler(
+                    device_object, args.output_dir / f"{task.task_name}.operators",
+                    enabled=profiling, start_step=training_config.get("operator_profile_start", 10),
+                    steps=training_config.get("operator_profile_steps", 1),
+                    record_shapes=training_config.get("operator_profile_shapes", True),
+                    profile_memory=training_config.get("operator_profile_memory", False),
+                    with_stack=training_config.get("operator_profile_stack", False),
+                ) as operator_profiler, StepTimer(
+                    device_object, "phases" if profiling else training_config.get("step_timing", "off"),
+                    args.output_dir / f"{task.task_name}.step_timing.jsonl",
+                ) as step_timer:
+                    def mark_phase(name):
+                        step_timer.mark(name)
+                        operator_profiler.mark(name)
 
-                def observe(category, tensors):
+                    def observe(category, tensors):
+                        @contextmanager
+                        def detail_scope(name):
+                            with step_timer.scope("numerics_"+category+"_"+name), operator_profiler.scope("numerics/"+category+"/"+name):
+                                yield
+                        with operator_profiler.scope("numerics/"+category):
+                            diagnostics.observe(category, tensors,
+                                scope=detail_scope if step_timer.mode == "phases" or profiling else None)
+
                     @contextmanager
-                    def detail_scope(name):
-                        with step_timer.scope("numerics_"+category+"_"+name), operator_profiler.scope("numerics/"+category+"/"+name):
+                    def optimizer_scope(name):
+                        with step_timer.optimizer_scope(name), operator_profiler.scope("optimizer/"+name):
                             yield
-                    with operator_profiler.scope("numerics/"+category):
-                        diagnostics.observe(category, tensors,
-                            scope=detail_scope if step_timer.mode == "phases" or profiling else None)
 
-                @contextmanager
-                def optimizer_scope(name):
-                    with step_timer.optimizer_scope(name), operator_profiler.scope("optimizer/"+name):
-                        yield
+                    last_metrics = None
+                    progress = tqdm(range(training_config.iterations), desc=task.task_name, leave=False)
+                    for train_step in progress:
+                        operator_profiler.before_step(train_step)
+                        step_timer.start(train_step)
+                        diagnostics.step = train_step
+                        with sharing_stage_timing(step_timer.scope if step_timer.mode == "phases" and training_config.get("sharing_stage_timing", False) else None):
+                            last_metrics = take_step(
+                                task, model, optimizer, train_step, training_config,
+                                return_outputs=True,
+                                **({"phase_callback": mark_phase} if step_timer.mode == "phases" or profiling else {}),
+                                **({"diagnostic_callback": observe} if run is not None else {}),
+                                **({"optimizer_scope": optimizer_scope} if step_timer.mode == "phases" or profiling else {}),
+                            )
+                        mark_phase("progress")
+                        progress.set_postfix(loss=f"{last_metrics['loss']:.3f}")
+                        mark_phase("diagnostics")
+                        diagnostics.after_step()
+                        mark_phase("candidates")
+                        tracker.update(train_step, last_metrics["outputs"])
+                        mark_phase("logging")
+                        log_training_metrics(run, task, tracker, train_step, last_metrics)
+                        step_times = step_timer.finish()
+                        if profiling:
+                            step_times["timing/operator_profile_active"] = operator_profiler.active
+                        step_timer.publish(step_times, run)
+                        operator_profiler.after_step(train_step)
 
-                last_metrics = None
-                progress = tqdm(range(training_config.iterations), desc=task.task_name, leave=False)
-                for train_step in progress:
-                    operator_profiler.before_step(train_step)
-                    step_timer.start(train_step)
-                    diagnostics.step = train_step
-                    with sharing_stage_timing(step_timer.scope if step_timer.mode == "phases" and training_config.get("sharing_stage_timing", False) else None):
-                        last_metrics = take_step(
-                            task, model, optimizer, train_step, training_config,
-                            return_outputs=True,
-                            **({"phase_callback": mark_phase} if step_timer.mode == "phases" or profiling else {}),
-                            **({"diagnostic_callback": observe} if run is not None else {}),
-                            **({"optimizer_scope": optimizer_scope} if step_timer.mode == "phases" or profiling else {}),
+                    if args.save_checkpoints or run is not None:
+                        args.output_dir.mkdir(parents=True, exist_ok=True)
+                        checkpoint_path = args.output_dir / f"{task.task_name}.pt"
+                        save_inference_checkpoint(
+                            checkpoint_path, task, model, tracker, config,
+                            training_config.iterations, last_metrics,
                         )
-                    mark_phase("progress")
-                    progress.set_postfix(loss=f"{last_metrics['loss']:.3f}")
-                    mark_phase("diagnostics")
-                    diagnostics.after_step()
-                    mark_phase("candidates")
-                    tracker.update(train_step, last_metrics["outputs"])
-                    mark_phase("logging")
-                    log_training_metrics(run, task, tracker, train_step, last_metrics)
-                    step_times = step_timer.finish()
-                    if profiling:
-                        step_times["timing/operator_profile_active"] = operator_profiler.active
-                    step_timer.publish(step_times, run)
-                    operator_profiler.after_step(train_step)
+                        log_model_checkpoint(run, checkpoint_path)
 
-                if args.save_checkpoints or run is not None:
-                    args.output_dir.mkdir(parents=True, exist_ok=True)
-                    checkpoint_path = args.output_dir / f"{task.task_name}.pt"
-                    save_inference_checkpoint(
-                        checkpoint_path, task, model, tracker, config,
-                        training_config.iterations, last_metrics,
-                    )
-                    log_model_checkpoint(run, checkpoint_path)
-
-                print(f"{task.task_name}: loss={last_metrics['loss']:.4f}")
-                print("Guess 1:", tracker.solution_most_frequent)
-                print("Guess 2:", tracker.solution_second_most_frequent)
-                if task.solution_hash is not None:
-                    print("Top-1 correct:", hash(tracker.solution_most_frequent) == task.solution_hash)
-                    print("Pass@2 correct:", any(
-                        hash(guess) == task.solution_hash
-                        for guess in (tracker.solution_most_frequent, tracker.solution_second_most_frequent)
-                    ))
-                log_final_candidates(run, tracker)
+                    print(f"{task.task_name}: loss={last_metrics['loss']:.4f}")
+                    print("Guess 1:", tracker.solution_most_frequent)
+                    print("Guess 2:", tracker.solution_second_most_frequent)
+                    if task.solution_hash is not None:
+                        print("Top-1 correct:", hash(tracker.solution_most_frequent) == task.solution_hash)
+                        print("Pass@2 correct:", any(
+                            hash(guess) == task.solution_hash
+                            for guess in (tracker.solution_most_frequent, tracker.solution_second_most_frequent)
+                        ))
+                    log_final_candidates(run, tracker)
             # Release the previous task before constructing the next GPU model.
             del model, optimizer, last_metrics
 

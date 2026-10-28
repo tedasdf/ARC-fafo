@@ -32,6 +32,8 @@ def initialize_wandb(config, task):
     sharing = config.get("model", {}).get("share_implementation", "primitives")
     if sharing != "primitives":
         tags.append("share-"+sharing)
+    if config.get("training", {}).get("runtime_device_dispatch", "global") == "explicit":
+        tags.append("dispatch-explicit")
     step_timing = config.get("training", {}).get("step_timing", "off")
     if config.get("training", {}).get("operator_profile", False):
         tags.append("operator-profile")
