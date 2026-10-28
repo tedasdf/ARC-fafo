@@ -74,6 +74,7 @@ def main(argv=None):
     effective_config = load_config(args.config, args.overrides)
     report = dict(task=args.task, optimizer_implementation=effective_config.training.get('optimizer_implementation', 'default'),
                   diagnostics_implementation=effective_config.training.get('diagnostics_implementation', 'reference'),
+                  share_implementation=effective_config.model.get('share_implementation', 'primitives'),
                   warmup_steps=args.warmup_steps,
                   measured_clean_steps=len(clean), clean_mean_seconds=statistics.mean(latencies),
                   clean_median_seconds=statistics.median(latencies), clean_phase_means=means,

@@ -126,5 +126,8 @@ def test_wandb_tags_identify_experiment_variant_and_seed(monkeypatch,name,varian
     for seed in (0,1,2):
         config.training.seed=seed
         initialize_wandb(config,SimpleNamespace(task_name="74dd1130"))
-        assert set(calls[-1]["tags"])=={"arc-agi","training","final-ablation","sample20","steps1500","strict",f"seed{seed}",variant}
+        expected={"arc-agi","training","final-ablation","sample20","steps1500","strict",f"seed{seed}",variant}
+        if variant=="projected-conv":
+            expected.add("C4")  # Existing control is the rotation-only conv backend.
+        assert set(calls[-1]["tags"])==expected
         assert calls[-1]["name"].endswith(f"-seed{seed}")

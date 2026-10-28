@@ -14,6 +14,7 @@ from ..layers.softmax_fused import softmax_fused
 from ..layers.latent_decoder import LatentDecoder
 from ..layers.output_heads import OutputHeads
 from ..layers.share.primitives import MultitensorShare
+from ..layers.share.reuse import ReusedMultitensorShare
 
 
 class ARCCompressor:
@@ -121,7 +122,12 @@ class ARCCompressor:
         factory = LayerFactory()
         self.latent_decoder = LatentDecoder(multify)
         self.output_heads = OutputHeads()
-        self.share = MultitensorShare()
+        sharing_backend = self.config.get("share_implementation", "primitives")
+        if sharing_backend not in ("primitives", "reuse", "batched"):
+            raise ValueError("share_implementation must be primitives, reuse or batched")
+        self.share = (MultitensorShare() if sharing_backend == "primitives" else
+                      ReusedMultitensorShare(batch=sharing_backend == "batched",
+                          max_batch_elements=self.config.get("share_batch_max_elements", 262144)))
         self._layer_call_options = {}
         for name in ("cummax", "shift", "direction_share"):
             implementation = getattr(self.config, f"{name}_implementation")

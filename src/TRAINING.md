@@ -553,3 +553,55 @@ python src/profile_layers.py \
 This experiment identifies whether grouped projections or communication/reduction
 fusion should be attempted next. It does not replace sharing with a dense block
 matrix or otherwise change model equations.
+
+
+### Reuse and optional batching for multitensor sharing
+
+`model.share_implementation=primitives` remains the default. `reuse` keeps the
+same projections and normalizations but plans compatible source/destination
+communication once, then reuses identical reduction/view prefixes within each
+forward. Mask unions, broadcast mask layouts, and +1e-4 denominators are reused
+only when their exact original layouts/reduction axes match. `batched` adds
+stacked evaluation of independent reduction nodes with matching operation,
+mask specification, shape, dtype, and device. The original destination addition
+order and reduction-axis order are retained. No parameters are added or changed.
+Share-up reuses insertion/broadcast views; it does not batch new matmuls.
+
+Plans cache only layout metadata, never values or autograd graphs. All values,
+masks, and denominators are reconstructed each forward, so optimizer updates,
+mask edits, and different tasks are observed. Inference checkpoints preserve the
+backend setting. W&B tags distinguish `share-reuse` and `share-batched`.
+
+`model.share_batch_max_elements` defaults to 262144 and bounds the element count
+of each stacked batch; oversized/single groups use individual reductions. This
+bounds temporary stacks, not total peak memory. Cached intermediate values and
+batched copies can increase peak memory. Floating-point accumulation in backward
+and batched reductions may differ; output/gradient parity is numerical, not a
+promise of bitwise identical training trajectories. CUDA cases require M3.
+
+```bash
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python -m pytest src/tests/correctness/layers/share/test_share_reuse.py -q -x
+```
+
+Profile reuse first, keeping all other accelerations and the same GPU:
+
+```bash
+python src/profile_layers.py \
+  --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json \
+  --task 00576224 --set training.split=evaluation \
+  --set model.direction_share_implementation=vectorized \
+  --set model.cummax_implementation=triton_hard \
+  --set model.softmax_implementation=fused \
+  --set model.share_implementation=reuse \
+  --set training.optimizer_implementation=fused \
+  --set training.diagnostics_implementation=triton \
+  --sharing-stages --device cuda:0 \
+  --output-dir outputs/d4_conv_share_reuse_profile \
+  --upload-wandb --artifact-name d4-conv-share-reuse-profile
+```
+
+Then change `reuse` to `batched`, using a distinct output directory and artifact
+name (`d4_conv_share_batched_profile` / `d4-conv-share-batched-profile`). Compare
+clean latency, communication forward/backward launches, and peak GPU memory.
+Batching may lose to reuse alone when copying costs outweigh launch savings.
