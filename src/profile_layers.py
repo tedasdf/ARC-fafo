@@ -8,6 +8,12 @@ from pathlib import Path
 
 
 def upload_profile(root, entity, project, name):
+    # Refuse stale checkpoints from a reused output directory.
+    weights = [p for p in Path(root).rglob('*') if p.is_file() and
+               p.suffix.lower() in ('.pt', '.pth', '.ckpt', '.safetensors')]
+    if weights:
+        raise ValueError('Profile upload contains checkpoint files; use a fresh output directory: '+
+                         ', '.join(str(p) for p in weights))
     # Use the installed CLI so upload progress and the final artifact link are visible.
     cmd = [sys.executable, '-m', 'wandb', 'artifact', 'put', str(root),
            '--name', f'{project}/{name}', '--type', 'profile']
@@ -44,7 +50,7 @@ def main(argv=None):
         iterations = args.warmup_steps + args.capture_steps if capture else args.clean_steps
         cmd = [sys.executable, str(repo/'src/train.py'), '--config', str(args.config.resolve()),
                '--task', args.task, '--output-dir', str(root/name)]
-        overrides = [*args.overrides, f'training.device={args.device}',
+        overrides = [*args.overrides, 'logging.save_model=false', f'training.device={args.device}',
                      f'training.iterations={iterations}', 'training.step_timing=phases',
                      f'training.operator_profile={str(capture).lower()}',
                      f'training.operator_profile_start={args.warmup_steps}',
@@ -72,7 +78,7 @@ def main(argv=None):
     latencies = [r['timing/step_seconds'] for r in clean]
     from config import load_config
     effective_config = load_config(args.config, args.overrides)
-    report = dict(task=args.task, optimizer_implementation=effective_config.training.get('optimizer_implementation', 'default'),
+    report = dict(task=args.task, cummax_implementation=effective_config.model.get('cummax_implementation', 'primitives'), optimizer_implementation=effective_config.training.get('optimizer_implementation', 'default'),
                   diagnostics_implementation=effective_config.training.get('diagnostics_implementation', 'reference'),
                   share_implementation=effective_config.model.get('share_implementation', 'primitives'),
                   runtime_device_dispatch=effective_config.training.get('runtime_device_dispatch', 'global'),

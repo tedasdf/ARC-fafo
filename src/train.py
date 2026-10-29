@@ -201,7 +201,7 @@ def main(argv=None):
                         step_timer.publish(step_times, run)
                         operator_profiler.after_step(train_step)
 
-                    if args.save_checkpoints or run is not None:
+                    if args.save_checkpoints or (run is not None and config.logging.get("save_model", True)):
                         args.output_dir.mkdir(parents=True, exist_ok=True)
                         checkpoint_path = args.output_dir / f"{task.task_name}.pt"
                         save_inference_checkpoint(

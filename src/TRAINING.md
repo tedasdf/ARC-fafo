@@ -795,3 +795,52 @@ Use `--dry-run` to inspect configurations without CUDA. The default sweep has
 132 layouts. Compilation and correctness validation can take several minutes;
 GPU timing begins after those steps. Results upload as report-only artifact
 `hard-cummax-launch-sweep` in `arc_agi/compressarc-final-ablation`; no weights.
+
+### Whole-step A/B: grouped cardinal hard-cummax backward
+
+`model.cummax_implementation=triton_hard_grouped` is an opt-in backend using
+8 positions per cardinal backward program and 4 warps. Cardinal forward and all
+diagonal scans use the original hard backend unchanged. It introduces no weights
+or changed initialisation. The ordinary `triton_hard` backend remains unchanged.
+Factory/checkpoint configuration distinguishes the backends, and W&B tags the
+experiment `cummax-triton-hard-grouped8`.
+
+The frozen-reference scan tests now cover both backends, including masks, ties,
+rectangular grids, input gradients and full-layer projection-weight gradients.
+Local CPU integration tests pass; CUDA tests must run on M3. Microbenchmark
+speedups are not evidence of a full-step improvement, especially on small tasks.
+
+`profile_layers.py` now forces `logging.save_model=false` for both passes.
+Normal training retains `logging.save_model=true` by default; explicitly asking
+for `--save-checkpoints` still saves a checkpoint. Profiling uploads reports,
+traces and candidate tables, with no model checkpoint artifacts or bundle weights.
+Use a fresh output directory so old local checkpoints are not re-uploaded.
+
+Run both backends sequentially on the SAME GPU/job to compare clean latency:
+
+```bash
+module load miniforge3
+mamba activate SymARC
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python -m pytest src/tests/correctness/layers/lse/test_hard_cummax_triton.py \
+  -q -x -k triton_hard_grouped && \
+for backend in triton_hard triton_hard_grouped; do
+  python src/profile_layers.py \
+    --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json \
+    --task 00576224 --set training.split=evaluation \
+    --set model.direction_share_implementation=vectorized \
+    --set model.cummax_implementation="$backend" \
+    --set model.softmax_implementation=fused \
+    --set model.share_implementation=reuse \
+    --set training.optimizer_implementation=fused \
+    --set training.diagnostics_implementation=triton \
+    --set training.runtime_device_dispatch=explicit \
+    --sharing-stages --device cuda:0 \
+    --output-dir "outputs/d4_conv_${backend}_ab" \
+    --upload-wandb --artifact-name "d4-conv-${backend}-ab" || break
+done
+```
+
+Compare `clean_mean_seconds`, `clean_median_seconds` and clean backward phase time
+in each `comparison.json`. Do not use the instrumented capture's step time as the
+speed result. Repeat on a larger task before choosing a default.

@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import pytest
+from types import SimpleNamespace
 import torch
 
 _spec=importlib.util.spec_from_file_location('frozen_hard_cummax',Path(__file__).with_name('reference_cummax_main.py'))
@@ -9,13 +10,22 @@ reference=importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(reference)
 
 
-@pytest.fixture
-def backend():
+@pytest.fixture(params=["triton_hard", "triton_hard_grouped"])
+def backend(request):
     if not torch.cuda.is_available():
         pytest.skip('CUDA is required to compile and validate Triton hard cummax')
     pytest.importorskip('triton')
     from compressarc.layers.cummax import triton_hard
-    return triton_hard
+    if request.param == "triton_hard_grouped":
+        from compressarc.layers.cummax import triton_hard_grouped as grouped
+        return SimpleNamespace(hard_cummax=grouped.hard_cummax_grouped,
+                               hard_diagonal_cummax=triton_hard.hard_diagonal_cummax,
+                               TritonHardCummax=grouped.TritonHardCummaxGrouped,
+                               implementation=request.param)
+    return SimpleNamespace(hard_cummax=triton_hard.hard_cummax,
+                           hard_diagonal_cummax=triton_hard.hard_diagonal_cummax,
+                           TritonHardCummax=triton_hard.TritonHardCummax,
+                           implementation=request.param)
 
 
 def tensors(shape,mode,values):
@@ -112,7 +122,7 @@ def test_no_learned_scan_parameters_and_factory_integration(backend):
             'model.channel_dim_grid=2','model.share_up_dim=2','model.share_down_dim=2',
             'model.decoding_dim=2','model.softmax_dim=2','model.cummax_dim=2',
             'model.shift_dim=2','model.nonlinear_dim=2','model.shift_implementation=d4_tied_conv',
-            'model.direction_share_implementation=vectorized','model.cummax_implementation=triton_hard'])
+            'model.direction_share_implementation=vectorized',f'model.cummax_implementation={backend.implementation}'])
         task=Task('hard_scan',{'train':[{'input':[[0,1],[1,0]],'output':[[1,0],[0,1]]}],
                               'test':[{'input':[[0,1],[0,1]]}]},None)
         model=ARCCompressor(task,config.model)

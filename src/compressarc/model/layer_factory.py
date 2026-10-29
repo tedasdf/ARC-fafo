@@ -40,6 +40,16 @@ def create_triton_hard_cummax(**kwargs):
     return TritonHardCummax(**kwargs)
 
 
+def create_triton_hard_grouped_cummax(**kwargs):
+    try:
+        from ..layers.cummax.triton_hard_grouped import TritonHardCummaxGrouped
+    except ModuleNotFoundError as error:
+        if error.name == "triton":
+            raise RuntimeError("Grouped hard cummax requires Triton on Linux with CUDA.") from error
+        raise
+    return TritonHardCummaxGrouped(**kwargs)
+
+
 def create_triton_shift(**kwargs):
     try:
         from ..layers.shift.triton_op import TritonTiedDirectionalConv
@@ -68,6 +78,7 @@ class LayerFactory:
             "cummax": {
                 "primitives": CummaxPrimitives,
                 "triton_hard": create_triton_hard_cummax,
+                "triton_hard_grouped": create_triton_hard_grouped_cummax,
                 "d4": partial(LSELayer, model_type=MorphologicalMax),
                 "optimised": partial(LSELayer, model_type=OptimisedMax),
                 "triton": create_triton_cummax,

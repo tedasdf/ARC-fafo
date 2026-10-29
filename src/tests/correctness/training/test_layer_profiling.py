@@ -83,6 +83,7 @@ def test_two_pass_dry_run(tmp_path):
     assert 'training.operator_profile=true' in result.stdout
     assert 'training.operator_profile_steps=2' in result.stdout
     assert 'training.sharing_stage_timing=true' in result.stdout
+    assert 'logging.save_model=false' in result.stdout
     assert not (tmp_path/'report').exists()
 
 
@@ -98,3 +99,16 @@ def test_artifact_upload_targets_reports_and_uses_online_mode(tmp_path, monkeypa
     assert kwargs['check'] is True
     assert kwargs['env']['WANDB_ENTITY'] == 'arc_agi'
     assert kwargs['env']['WANDB_MODE'] == 'online'
+
+
+def test_profile_upload_refuses_stale_model_weights(tmp_path, monkeypatch):
+    import pytest
+    import profile_layers
+    stale=tmp_path/'clean'/'old.pt'
+    stale.parent.mkdir()
+    stale.write_bytes(b'checkpoint')
+    calls=[]
+    monkeypatch.setattr(profile_layers.subprocess,'run',lambda *a,**kw:calls.append(a))
+    with pytest.raises(ValueError,match='checkpoint files'):
+        profile_layers.upload_profile(tmp_path,'arc_agi','compressarc-final-ablation','profile')
+    assert calls==[]

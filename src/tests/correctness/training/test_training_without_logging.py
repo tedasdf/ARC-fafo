@@ -12,12 +12,14 @@ from preprocessing import Task
 from compressarc.train.metrics import SolutionTracker
 
 
+@pytest.mark.parametrize("save_model", [False, True])
 @pytest.mark.parametrize("save_checkpoints", [False, True])
 @pytest.mark.parametrize("wandb_enabled", [False, True])
 @pytest.mark.parametrize("has_labels", [False, True])
-def test_training_without_wandb_tracks_every_step_and_saves_checkpoint(monkeypatch, tmp_path, has_labels, wandb_enabled, save_checkpoints):
+def test_training_without_wandb_tracks_every_step_and_saves_checkpoint(monkeypatch, tmp_path, has_labels, wandb_enabled, save_checkpoints, save_model):
     config = load_config(overrides=["training.iterations=101", "training.device=cpu"])
     config.logging.wandb = wandb_enabled
+    config.logging.save_model = save_model
     records, finished = [], []
     run = SimpleNamespace(log=records.append, summary={}, define_metric=lambda *a, **k: None,
                           finish=lambda **kwargs: finished.append(kwargs))
@@ -73,7 +75,7 @@ def test_training_without_wandb_tracks_every_step_and_saves_checkpoint(monkeypat
         torch.set_default_device(original_device)
     assert updates == list(range(101))
     assert requests == [True] * 101
-    if save_checkpoints or wandb_enabled:
+    if save_checkpoints or (wandb_enabled and save_model):
         checkpoint = torch.load(tmp_path / "no_logging.pt", weights_only=True)
         assert checkpoint["task"] == "no_logging"
         assert checkpoint["metrics"]["loss"] == 3.0
@@ -87,7 +89,8 @@ def test_training_without_wandb_tracks_every_step_and_saves_checkpoint(monkeypat
     if wandb_enabled:
         assert len(init_calls) == 1 and "config" not in init_calls[0]
         assert finished == [{"exit_code": 0}]
-        assert uploads == [(run, tmp_path / "no_logging.pt", True, False)]
+        assert uploads == ([(run, tmp_path / "no_logging.pt", True, False)]
+                           if save_checkpoints or save_model else [])
     if wandb_enabled:
         expected = []
         for step in range(101):

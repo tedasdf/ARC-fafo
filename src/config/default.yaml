@@ -18,7 +18,7 @@ model:
   # shift: primitives | c4_tied_conv | d4_tied_conv | tied_conv (legacy C4 alias) | unfold | triton
   # C4 conv/unfold/Triton enforce rotations; d4_tied_conv also enforces reflections.
   shift_implementation: primitives
-  # cummax: primitives | triton_hard (hard max) | d4 (LSE) | optimised (LSE) | triton (LSE)
+  # cummax: primitives | triton_hard | triton_hard_grouped (hard max) | d4 (LSE) | optimised (LSE) | triton (LSE)
   cummax_implementation: primitives
   lse_tau: 0.1
   layer_timing: false
@@ -56,6 +56,8 @@ training:
 
 
 logging:
+  # Profiling driver disables model saving; explicit --save-checkpoints still saves.
+  save_model: true
   wandb: false
   wandb_project: compressarc-final-ablation
   wandb_entity: null

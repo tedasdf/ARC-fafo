@@ -34,6 +34,8 @@ def initialize_wandb(config, task):
         tags.append("share-"+sharing)
     if config.get("training", {}).get("runtime_device_dispatch", "global") == "explicit":
         tags.append("dispatch-explicit")
+    if config.get("model", {}).get("cummax_implementation") == "triton_hard_grouped":
+        tags.append("cummax-triton-hard-grouped8")
     step_timing = config.get("training", {}).get("step_timing", "off")
     if config.get("training", {}).get("operator_profile", False):
         tags.append("operator-profile")
