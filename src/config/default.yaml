@@ -5,7 +5,7 @@ model:
   channel_dim_grid: 8
   share_up_dim: 16
   share_down_dim: 8
-  # Equivalent sharing: primitives | reuse | batched (reuse + compatible reductions).
+  # Sharing: primitives | reuse | batched | reuse_fused_norm (FP32 CUDA norm fusion).
   share_implementation: primitives
   share_batch_max_elements: 262144
   decoding_dim: 4

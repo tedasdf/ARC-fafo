@@ -50,8 +50,9 @@ def make_plan(layouts,direction,known_size):
 
 
 class ReusedMultitensorShare(MultitensorShare):
-    def __init__(self,batch=False,max_batch_elements=262144):
+    def __init__(self,batch=False,max_batch_elements=262144,fused_normalization=False):
         if max_batch_elements<1:raise ValueError('share_batch_max_elements must be positive')
+        self.fused_normalization=fused_normalization
         self.batch=batch
         self.max_batch_elements=int(max_batch_elements)
         self._plans={}
@@ -145,7 +146,16 @@ class ReusedMultitensorShare(MultitensorShare):
         with profile_share_stage(component,'communication'):
             communicated=self.communicate(projected,direction)
         with profile_share_stage(component,'normalization'):
-            communicated=normalize(communicated)
+            if self.fused_normalization:
+                def normalize_one(dims,value):
+                    # Optional Triton import is never required for CPU/FP64 paths.
+                    if value.is_cuda and value.dtype==torch.float32:
+                        from .normalization_triton import normalize_tensor
+                        return normalize_tensor(value)
+                    return normalize(value)
+                communicated=multitensor_systems.multify(normalize_one)(communicated)
+            else:
+                communicated=normalize(communicated)
         with profile_share_stage(component,'destination_projection'):
             communicated=affine(communicated,up,use_bias=False)
         with profile_share_stage(component,'residual'):

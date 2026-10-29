@@ -844,3 +844,56 @@ done
 Compare `clean_mean_seconds`, `clean_median_seconds` and clean backward phase time
 in each `comparison.json`. Do not use the instrumented capture's step time as the
 speed result. Repeat on a larger task before choosing a default.
+
+### Opt-in sharing normalisation fusion
+
+`model.share_implementation=reuse_fused_norm` keeps the existing reused sharing
+DAG, exact masked reduction order/denominators, tied projection weights and
+residual structure. Only the normalisation between communication and destination
+projection changes: two Triton kernels for forward (statistics/output), and two
+for backward (gradient statistics/input gradients), replacing multiple separate
+reductions and elementwise autograd operations per multitensor component.
+This is normalisation fusion, not a fused implementation of the entire sharing
+layer. Matrix multiplications and communication reductions are unchanged.
+
+The formulas retain centered population variance over all non-channel axes and
+epsilon 1e-8. Backward explicitly subtracts the mean of the centered-input gradient;
+it does not assume floating-point mean(centered input) is exactly zero. Reduction
+order and rsqrt-based arithmetic can differ numerically from native PyTorch.
+No parameters, initialisation or weight tying are changed.
+
+The fused path supports contiguous FP32 CUDA tensors with rank >=2 and at most
+8192 rows (all non-channel dimensions flattened). Other layouts, larger cases,
+CPU and FP64 use original normalisation. Statistics use eight warps at N>=4096,
+four otherwise; output/gradient application uses blocks of 256 elements. This
+initial layout is experimental, not an established fastest configuration.
+CUDA fusion supports first-order training gradients only. CPU tests verify
+fallback equations and unchanged parameters; M3 tests compare fused outputs,
+input/projection/mask gradients, constant and low-variance inputs and fallbacks.
+
+After committing/pulling the code, run on the SAME GPU as the prior profile:
+
+```bash
+module load miniforge3
+mamba activate SymARC
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python -m pytest src/tests/correctness/training/test_fused_share_normalization.py -q -x && \
+python src/profile_layers.py \
+  --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json \
+  --task 00576224 --set training.split=evaluation \
+  --set model.direction_share_implementation=vectorized \
+  --set model.cummax_implementation=triton_hard_grouped \
+  --set model.softmax_implementation=fused \
+  --set model.share_implementation=reuse_fused_norm \
+  --set training.optimizer_implementation=fused \
+  --set training.diagnostics_implementation=triton \
+  --set training.runtime_device_dispatch=explicit \
+  --sharing-stages --device cuda:0 \
+  --output-dir outputs/d4_conv_fused_share_norm_profile \
+  --upload-wandb --artifact-name d4-conv-fused-share-norm-profile
+```
+
+Compare clean full-step and backward timing with the grouped-cardinal + plain
+reuse baseline (~0.268 s on the small L4 task). Fusion may increase register
+pressure or be inefficient for small channel counts: no speedup is assumed.
+Profiling saves reports/traces, with no checkpoints or model-weight uploads.
