@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 
 import torch.nn.functional as F
+from ...train.layer_profiling import profile_operation_stage
 
 class C4DirectionalConv(nn.Module):
     """Rotation-tied directional convolution; learned reflections are not constrained."""
@@ -99,12 +100,13 @@ class C4DirectionalConv(nn.Module):
         # [2,4,3,3] -> [8,1,3,3]
         kernels_flat = self.directional_kernels()
 
-        y = F.conv2d(
-            x_flat,
-            kernels_flat,
-            padding=1,
-            groups=8,
-        )
+        with profile_operation_stage("shift", "convolution"):
+            y = F.conv2d(
+                x_flat,
+                kernels_flat,
+                padding=1,
+                groups=8,
+            )
 
         # restore [cardinal/diagonal, direction]
         y = y.reshape(B, 2, 4, H, W)

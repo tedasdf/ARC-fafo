@@ -32,3 +32,10 @@ def profile_share_stage(component, stage):
     trace_scope = torch.profiler.record_function('stage/'+component+'/'+stage) if active_layer_profile.get() else nullcontext()
     with timing_scope, trace_scope:
         yield
+
+
+def profile_operation_stage(component, stage):
+    """Label forward operations for sequence-linked backward attribution only."""
+    if active_layer_profile.get():
+        return torch.profiler.record_function('stage/'+component+'/'+stage)
+    return nullcontext()

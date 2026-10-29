@@ -637,3 +637,36 @@ python src/profile_layers.py \
   --output-dir outputs/d4_conv_explicit_dispatch_profile \
   --upload-wandb --artifact-name d4-conv-explicit-dispatch-profile
 ```
+
+### Diagnose backward before changing implementation
+
+The short operator capture now labels vectorised direction sharing as
+`normalization`, `weight_packing`, `input_layout`, `matmul`, and `residual`.
+D4 shift labels distinguish `d4_projection`, `kernel_expansion`, and
+`convolution`. These labels are active only during the instrumented capture;
+model equations, gradients, and saved-tensor policy are unchanged.
+
+The `.layers.json` report adds `operation_stages` and `backward_nodes`.
+Autograd sequence numbers link backward nodes to forward stages, including
+across worker threads. Inspect `StackBackward`, `CloneBackward`, `CopyBackward`,
+`PermuteBackward`, `MmBackward`, and `ConvolutionBackward` alongside their stage,
+CPU operator self time, GPU kernel time and actual kernel-launch count. Nodes
+without an unambiguous link remain unassigned; views are not necessarily copies.
+Do not interpret a backward node's name alone as proof of materialisation.
+
+Existing `sharing_stages` still contains only share-up/down stages. Generic
+operation stages include those rows too; do not add both tables. CPU self times
+and kernel sums are diagnostic attribution, not isolated clean stage latency.
+
+Run the usual explicit-dispatch profile with `--profile-memory` and a distinct
+output directory/artifact name, for example `d4_conv_backward_stages_profile`
+and `d4-conv-backward-stages-profile`. Memory events in the raw Chrome trace help
+identify allocations and copies; allocation traffic does not equal peak live
+memory or saved activation memory. `--with-stack` is optional and adds overhead.
+The separate clean pass remains the source of wall-clock latency. No checkpointing
+or custom backward optimisation has been introduced by these profiling labels.
+
+```bash
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python -m pytest src/tests/correctness/training/test_backward_stage_profiling.py -q -x
+```

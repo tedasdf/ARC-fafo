@@ -51,12 +51,15 @@ def analyze_trace(path, prefix=None):
             backward_seq = inherited.get('backward_seq')
             if phase == 'backward' and sequence is not None and 'Backward' in e['name']:
                 backward_seq = (e['pid'], sequence)
+            backward_node = inherited.get('backward_node')
+            if phase == 'backward' and e['name'].startswith('autograd::engine::evaluate_function: '):
+                backward_node = e['name'].split(': ', 1)[1]
             optimizer_component = inherited.get('optimizer_component')
             if e['name'].startswith('ttt/optimizer/'):
                 optimizer_component = e['name'].split('/')[-1]
             info[i] = dict(phase=phase, layer=layer, backward_seq=backward_seq,
                            self_cpu_us=float(e['dur']), parent=parent,
-                           optimizer_component=optimizer_component, share_stage=share_stage)
+                           optimizer_component=optimizer_component, share_stage=share_stage, backward_node=backward_node)
             if parent is not None:
                 info[parent]['self_cpu_us'] -= e['dur']
             if phase == 'forward' and layer and sequence is not None:
@@ -100,6 +103,7 @@ def analyze_trace(path, prefix=None):
                     scalar_reads=0)
     layers, phases, operations, sync_apis, optimizer_parts = (defaultdict(entry) for _ in range(5))
     sharing = defaultdict(entry)
+    backward_nodes = defaultdict(entry)
     for p in ranges:
         phases[p['name'][4:]]['host_range_us'] += p['dur']
     for i, item in info.items():
@@ -119,6 +123,9 @@ def analyze_trace(path, prefix=None):
                 targets.append(sharing[(phase,layer,stage)])
             if phase == 'optimizer':
                 targets.append(optimizer_parts[part or 'unassigned'])
+            if phase == 'backward':
+                node = item.get('backward_node') or 'unassigned'
+                targets.append(backward_nodes[(layer, stage or 'unassigned', node)])
             for row in targets:
                 row['cpu_operator_self_us'] += max(0., item['self_cpu_us'])
                 row['scalar_reads'] += e['name'] == 'aten::_local_scalar_dense'
@@ -142,6 +149,9 @@ def analyze_trace(path, prefix=None):
             if phase == 'optimizer':
                 part = info[index].get('optimizer_component') if index is not None else None
                 targets.append(optimizer_parts[part or 'unassigned'])
+            if phase == 'backward':
+                node = info[index].get('backward_node') if index is not None else None
+                targets.append(backward_nodes[(layer, stage or 'unassigned', node or 'unassigned')])
             for row in targets:
                 row['kernel_launches'] += 1
                 row['gpu_kernel_us'] += e['dur']
@@ -184,8 +194,11 @@ def analyze_trace(path, prefix=None):
     stage_rows = sorted([dict(phase=k[0],component=k[1].split('/')[0],stage=k[1].split('/')[-1],**v)
                          for k,v in stage_totals.items()],key=lambda r:r['kernel_launches'],reverse=True)
     result = dict(
-        sharing_stages=stage_rows,
-        sharing_stage_attributed_launches=sum(r['kernel_launches'] for r in stage_rows),
+        operation_stages=stage_rows,
+        backward_nodes=sorted([dict(layer=k[0], stage=k[1], node=k[2], **v) for k,v in backward_nodes.items()],
+                              key=lambda r:r['cpu_operator_self_us'], reverse=True),
+        sharing_stages=[r for r in stage_rows if r['component'] in ('share_up','share_down')],
+        sharing_stage_attributed_launches=sum(r['kernel_launches'] for r in stage_rows if r['component'] in ('share_up','share_down')),
         sharing_layer_launches=sum(r['kernel_launches'] for r in layer_rows if r['layer'].endswith(('/share_up','/share_down'))),
         captured_forward_steps=sum(p['name']=='ttt/forward' for p in ranges),
         component_totals=component_rows,
@@ -220,6 +233,10 @@ def analyze_trace(path, prefix=None):
         lines += [f"{r['component']} | {r['kernel_launches']} | {r['gpu_kernel_us']/1000:.3f} | {r['host_range_us']/1000:.3f} | {r['synchronization_calls']} | {r['scalar_reads']}" for r in result['optimizer_components']]
         lines += ['', 'Sharing stage (included in sharing layer totals) | phase | kernels | GPU ms | CPU operator self ms | forward host range ms']
         lines += [f"{r['component']}/{r['stage']} | {r['phase']} | {r['kernel_launches']} | {r['gpu_kernel_us']/1000:.3f} | {r['cpu_operator_self_us']/1000:.3f} | {r['host_range_us']/1000:.3f}" for r in result['sharing_stages']]
+        lines += ['', 'Operation stage | phase | kernels | GPU ms | attributed CPU self ms']
+        lines += [f"{r['component']}/{r['stage']} | {r['phase']} | {r['kernel_launches']} | {r['gpu_kernel_us']/1000:.3f} | {r['cpu_operator_self_us']/1000:.3f}" for r in result['operation_stages']]
+        lines += ['', 'Backward autograd node | layer | stage | kernels | GPU ms | attributed CPU self ms']
+        lines += [f"{r['node']} | {r['layer']} | {r['stage']} | {r['kernel_launches']} | {r['gpu_kernel_us']/1000:.3f} | {r['cpu_operator_self_us']/1000:.3f}" for r in result['backward_nodes']]
         lines += ['', 'Component across depths | phase | kernels | GPU kernel ms | CPU operator self ms']
         lines += [f"{r['component']} | {r['phase']} | {r['kernel_launches']} | {r['gpu_kernel_us']/1000:.3f} | {r['cpu_operator_self_us']/1000:.3f}" for r in component_rows]
         lines += ['', 'Layer | phase | kernels | GPU kernel ms | CPU operator self ms']

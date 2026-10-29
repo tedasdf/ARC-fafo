@@ -2,6 +2,7 @@
 import torch
 
 from ..helper import normalize, only_do_for_certain_shapes
+from ...train.layer_profiling import profile_operation_stage
 from .primitives import DirectionSharePrimitives, directional_dims
 
 
@@ -19,7 +20,8 @@ class DirectionShareVectorized(DirectionSharePrimitives):
         self._coefficients = {}
 
         def apply_one(dims, x, weights, pre_norm=True, use_bias=False):
-            z = normalize(x) if pre_norm else x
+            with profile_operation_stage("direction_share", "normalization"):
+                z = normalize(x) if pre_norm else x
             direction_dim = -2 - dims[3] - dims[4]
             key = (x.device, x.dtype)
             if key not in self._coefficients:
@@ -29,16 +31,21 @@ class DirectionShareVectorized(DirectionSharePrimitives):
             coefficients = self._coefficients[key]
             channels = x.shape[-1]
             # [out, in, Cin, Cout] -> [in*Cin, out*Cout]
-            blocks = torch.stack([pair[0] for row in weights for pair in row]).reshape(
-                8, 8, channels, channels)
-            packed = (blocks * coefficients[..., None, None]).permute(1, 2, 0, 3).reshape(
-                8*channels, 8*channels)
-            moved = z.movedim(direction_dim, -2)
-            delta = (moved.reshape(-1, 8*channels) @ packed).reshape(moved.shape)
+            with profile_operation_stage("direction_share", "weight_packing"):
+                blocks = torch.stack([pair[0] for row in weights for pair in row]).reshape(
+                    8, 8, channels, channels)
+                packed = (blocks * coefficients[..., None, None]).permute(1, 2, 0, 3).reshape(
+                    8*channels, 8*channels)
+            with profile_operation_stage("direction_share", "input_layout"):
+                moved = z.movedim(direction_dim, -2)
+                flattened = moved.reshape(-1, 8*channels)
+            with profile_operation_stage("direction_share", "matmul"):
+                delta = (flattened @ packed).reshape(moved.shape)
             if use_bias:
                 biases = torch.stack([pair[1] for row in weights for pair in row]).reshape(
                     8, 8, channels)
                 delta = delta + (biases * coefficients[..., None]).sum(dim=1)
-            return x + delta.movedim(-2, direction_dim)
+            with profile_operation_stage("direction_share", "residual"):
+                return x + delta.movedim(-2, direction_dim)
 
         self._apply = multify(only_do_for_certain_shapes(*directional_dims)(apply_one))
