@@ -749,3 +749,49 @@ Run the prior `profile_backward.py` command with a fresh output directory:
 `--output-dir outputs/d4_conv_backward_coverage --upload-wandb`. Uploads now use
 artifact `d4-conv-backward-coverage`, preserving the earlier five-component report.
 Reports contain JSON/text only; no model weights or checkpoints are uploaded.
+
+### Hard-cummax launch-layout sweep (experimental)
+
+`src/benchmark_cummax_launch.py` sweeps axis lengths, row counts, output positions
+per cardinal backward program, diagonal spatial sizes/batches, block sizes and
+warp counts. It does not modify the training factory or production hard-cummax
+backend. `positions=1,warps=4` is the current cardinal kernel; diagonal
+`block=256,warps=4` is the current diagonal pipeline layout.
+
+Grouped cardinal backward programs compute several output gradients while
+sharing the row input loads; this remains the same quadratic gradient formula,
+not a new prefix-gradient algorithm. Larger groups may reduce repeated loads
+but increase register pressure. Performance must be measured, not assumed.
+Programs are workgroups inside a launch, not additional kernel launches.
+Diagonal block size changes programs per scan stage; the original tree and its
+equal-value gradient splitting are retained.
+
+Every layout is checked against primitive PyTorch outputs AND input gradients
+on the timed shape with random masked inputs, ties, and +/-1000 padding ties.
+Invalid layouts are recorded and excluded from winner selection. Compilation
+and validation are outside timing. Preallocated contiguous buffers exclude
+allocation, movedim/contiguous adapters and autograd scheduling. These timings
+are amortised dispatch-to-completion cost, not model layer latency. CUDA-event
+spans include dispatch gaps, not just kernel-active execution. Compare any
+winner in a whole-step A/B experiment before adopting it. Reports include the
+baseline comparison, launch/program counts, shapes and GPU metadata.
+
+```bash
+module load miniforge3
+mamba activate SymARC
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python -m pytest src/tests/correctness/layers/lse/test_cummax_launch_sweep.py -q -x && \
+python src/benchmark_cummax_launch.py \
+  --device cuda:0 --kind both \
+  --lengths 6 16 30 64 --rows 32 256 2048 \
+  --positions 1 2 4 8 --warps 4 8 \
+  --spatial-sizes 6x6 16x16 30x30 --batches 8 64 \
+  --blocks 128 256 512 \
+  --warmup 10 --samples 10 --repeats 20 \
+  --output-dir outputs/hard_cummax_launch_sweep --upload-wandb
+```
+
+Use `--dry-run` to inspect configurations without CUDA. The default sweep has
+132 layouts. Compilation and correctness validation can take several minutes;
+GPU timing begins after those steps. Results upload as report-only artifact
+`hard-cummax-launch-sweep` in `arc_agi/compressarc-final-ablation`; no weights.
