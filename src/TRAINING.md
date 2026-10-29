@@ -670,3 +670,48 @@ or custom backward optimisation has been introduced by these profiling labels.
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 python -m pytest src/tests/correctness/training/test_backward_stage_profiling.py -q -x
 ```
+
+### Isolated backward completion benchmark
+
+`src/profile_backward.py` measures a full-loss backward reference and isolated
+VJPs for share-up, share-down, direction sharing, shift and cummax at every depth.
+It prepares the model with ten training steps, then fixes the weights. One normal
+loss backward captures actual component inputs and upstream gradients. Each
+isolated sample rebuilds its forward graph, then times backward only. Tied
+parameters, input devices and strides are preserved. No weights/checkpoints are
+saved; the optional W&B artifact contains JSON/text reports only.
+
+Warmup is separate for every component. JSON includes every boundary's shapes,
+strides, output-gradient coverage, median/mean/min/max completion time and CUDA
+stream spans. CUDA barriers isolate each backward from pending forward work;
+stream spans include dispatch gaps and are not GPU kernel-active time. Use the
+existing operator trace for kernel-active execution and launch counts.
+
+These are controlled microbenchmarks at one prepared weight snapshot, not a
+replacement for the clean whole-step benchmark. Detached input boundaries change
+scheduling and accumulation; do not sum component times as full-model time or
+interpret a difference as an exact removable cost. Identity outputs can share
+gradient paths. Confirm any eventual optimisation with full-step timing and
+correctness checks. No benchmark result establishes full-training accuracy.
+
+```bash
+module load miniforge3
+mamba activate SymARC
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python -m pytest src/tests/correctness/training/test_backward_latency.py -q -x && \
+python src/profile_backward.py \
+  --config experiments/d4_conv_pilot20/configs/projected_conv_d4.json \
+  --task 00576224 --set training.split=evaluation \
+  --set model.direction_share_implementation=vectorized \
+  --set model.cummax_implementation=triton_hard \
+  --set model.softmax_implementation=fused \
+  --set model.share_implementation=reuse \
+  --set training.optimizer_implementation=fused \
+  --set training.runtime_device_dispatch=explicit \
+  --device cuda:0 --prepare-steps 10 --warmup-steps 5 --measured-steps 20 \
+  --output-dir outputs/d4_conv_backward_latency --upload-wandb
+```
+
+`--components direction_share shift` limits the isolated cases when desired.
+This script does not enable per-step W&B logging or numerical checks, so the
+`training.diagnostics_implementation` setting does not affect the timed VJPs.
