@@ -897,3 +897,53 @@ Compare clean full-step and backward timing with the grouped-cardinal + plain
 reuse baseline (~0.268 s on the small L4 task). Fusion may increase register
 pressure or be inefficient for small channel counts: no speedup is assumed.
 Profiling saves reports/traces, with no checkpoints or model-weight uploads.
+
+### Compare compatible acceleration across all variants
+
+`src/benchmark_variants.py` compares reference versus accelerated execution for
+original CompressARC, projected C4-conv, projected D4-conv, projected D4 direction
+sharing, and projected LSE. This is measurement using existing backends, not a
+new optimisation or experiment configuration change. It runs sequentially on the
+same GPU with the same task, split and seed. By default that is ten short runs:
+five variants x two modes, each 40 steps with the first ten omitted from timing.
+
+The accelerated settings are fused softmax, reuse + fused sharing normalisation,
+fused Adam, direct numerical checks, and explicit runtime device dispatch.
+Primitive direction sharing becomes the equivalent vectorised implementation;
+projected D4 sharing remains `d4`. Primitive hard cummax becomes grouped hard
+Triton; learned LSE stays `optimised`, with its original tau and learned weights.
+All shifts retain their original choice: fixed shifts, C4 conv or D4 conv.
+No change is made to the source experiment configs, model dimensions or seeds.
+
+Reference mode uses primitive sharing/softmax, the default Adam and diagnostics,
+and global device dispatch. The variant's own variable operator is preserved.
+Numerical reduction order can differ; short parity tests do not establish
+identical 1500-step trajectories or equal task accuracy. CUDA tests compare the
+actual accelerated implementations; CPU tests substitute hard primitives for
+CUDA scans and check native-equivalent paths only.
+
+The profiling driver now has `--clean-only` and `--run-label`. This comparison
+uses no operator capture, does not save or upload weights, and retains ordinary
+per-step diagnostics, candidate tracking and logging overhead. Each W&B run is
+named with the variant and mode and tagged `variant-latency`. The summary artifact
+`variant-latency-comparison` contains JSON/CSV comparisons, effective model
+settings, GPU metadata and timing files, with no large operator traces.
+
+```bash
+module load miniforge3
+mamba activate SymARC
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+python -m pytest src/tests/correctness/training/test_variant_latency.py -q -x && \
+python src/benchmark_variants.py \
+  --tasks 00576224 --split evaluation --seed 0 --device cuda:0 \
+  --clean-steps 40 --warmup-steps 10 \
+  --output-dir outputs/variant_latency_comparison --upload-wandb
+```
+
+Use `--dry-run` to inspect all commands without GPU execution or file creation.
+Use `--variants original projected_d4 projected_lse` for a subset, or
+`--modes accelerated` to measure only accelerated versions. Use a fresh output
+directory for each repeat. `--tasks` accepts several IDs from the selected split;
+include larger tasks before extrapolating full-dataset runtime. Failed jobs are
+recorded explicitly, do not get speedup values, and make the script exit with an
+error after preserving the completed reports.

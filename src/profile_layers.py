@@ -25,8 +25,10 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--config', required=True, type=Path)
     p.add_argument('--task', required=True)
+    p.add_argument('--run-label', default='layer_profile')
     p.add_argument('--device', default='cuda:0')
     p.add_argument('--set', dest='overrides', action='append', default=[])
+    p.add_argument('--clean-only', action='store_true', help='Measure latency without an operator trace')
     p.add_argument('--clean-steps', type=int, default=40)
     p.add_argument('--warmup-steps', type=int, default=10)
     p.add_argument('--capture-steps', type=int, default=1)
@@ -45,7 +47,7 @@ def main(argv=None):
         p.error('clean-steps must exceed positive warmup-steps; capture-steps must be positive')
     repo = Path(__file__).resolve().parents[1]
     root = args.output_dir.resolve()
-    for capture in (False, True):
+    for capture in ((False,) if args.clean_only else (False, True)):
         name = 'profile' if capture else 'clean'
         iterations = args.warmup_steps + args.capture_steps if capture else args.clean_steps
         cmd = [sys.executable, str(repo/'src/train.py'), '--config', str(args.config.resolve()),
@@ -58,7 +60,7 @@ def main(argv=None):
                      f'training.operator_profile_shapes={str(not args.no_shapes).lower()}',
                      f'training.operator_profile_memory={str(args.profile_memory).lower()}',
                      f'training.operator_profile_stack={str(args.with_stack).lower()}',
-                     f'experiment.name=layer_profile_{name}']
+                     f'experiment.name={args.run_label}_{name}']
         if args.sharing_stages:
             overrides.append('training.sharing_stage_timing=true')
         for override in overrides:
@@ -73,7 +75,7 @@ def main(argv=None):
     keys = sorted({k for r in clean for k in r if k.startswith('timing/')})
     means = {k:sum(r.get(k, 0) for r in clean)/len(clean) for k in keys}
     prefix = root/'profile'/f'{args.task}.operators'
-    analysis = json.loads(Path(str(prefix)+'.layers.json').read_text())
+    analysis = {} if args.clean_only else json.loads(Path(str(prefix)+'.layers.json').read_text())
     import statistics
     latencies = [r['timing/step_seconds'] for r in clean]
     from config import load_config
@@ -82,7 +84,7 @@ def main(argv=None):
                   diagnostics_implementation=effective_config.training.get('diagnostics_implementation', 'reference'),
                   share_implementation=effective_config.model.get('share_implementation', 'primitives'),
                   runtime_device_dispatch=effective_config.training.get('runtime_device_dispatch', 'global'),
-                  warmup_steps=args.warmup_steps,
+                  clean_only=args.clean_only, warmup_steps=args.warmup_steps,
                   measured_clean_steps=len(clean), clean_mean_seconds=statistics.mean(latencies),
                   clean_median_seconds=statistics.median(latencies), clean_phase_means=means,
                   profile=analysis,
@@ -111,7 +113,8 @@ def main(argv=None):
     for key in sorted(k for k in means if k.startswith('timing/host_numerics_')):
         name = key.removeprefix('timing/host_').removesuffix('_seconds')
         text.append(f"{name} | {means[key]:.6f} | {means.get('timing/stream_'+name+'_seconds',0):.6f}")
-    text += ['', Path(str(prefix)+'.layers.txt').read_text(), '', 'Options to test, selected using the measured bottleneck:', *report['optimization_options']]
+    if not args.clean_only:
+        text += ['', Path(str(prefix)+'.layers.txt').read_text(), '', 'Options to test, selected using the measured bottleneck:', *report['optimization_options']]
     (root/'comparison.txt').write_text('\n'.join(text)+'\n', encoding='utf-8')
     print('\n'.join(text), flush=True)
     if args.upload_wandb:
