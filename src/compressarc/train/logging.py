@@ -44,10 +44,17 @@ def initialize_wandb(config, task):
     variant_tag = config.get("experiment", {}).get("variant")
     if variant_tag:
         tags.append(variant_tag)
+    init_options = {}
+    if options.get("log_config", False):
+        from omegaconf import OmegaConf
+        effective = OmegaConf.to_container(config, resolve=True)
+        effective["task_id"] = task.task_name
+        init_options["config"] = effective
     run = wandb.init(
         project=options.wandb_project, entity=options.wandb_entity,
         mode=options.wandb_mode, name=run_name, tags=list(dict.fromkeys(tags)),
         settings=wandb.Settings(disable_git=True, disable_code=True, x_disable_stats=True, console="off"),
+        **init_options,
     )
     run.define_metric("train_step")
     run.define_metric("predictions/*", step_metric="train_step")
