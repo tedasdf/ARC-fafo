@@ -19,18 +19,9 @@ def mask_select_logprobs(mask, length):
     return torch.logsumexp(logprobs, dim=0), logprobs
 
 
-def take_step(task, model, optimizer, train_step, config=None, return_outputs=False,
-              phase_callback=None, diagnostic_callback=None, optimizer_scope=None):
-    """Compute the ARC objective, update model weights, and return scalar metrics."""
-    config = config if config is not None else load_config().training
-    optimizer.zero_grad()
-    if phase_callback is not None:
-        phase_callback("forward")
-    logits, x_mask, y_mask, kl_amounts, kl_names = model.forward()
-    if diagnostic_callback is not None:
-        diagnostic_callback("outputs", (logits, x_mask, y_mask, *kl_amounts))
-    if phase_callback is not None:
-        phase_callback("loss")
+def compute_objective(task, model_outputs, train_step, config):
+    """Build the unchanged ARC loss from model outputs, without backward/update."""
+    logits, x_mask, y_mask, kl_amounts, kl_names = model_outputs
     logits = torch.cat([torch.zeros_like(logits[:, :1, :, :]), logits], dim=1)
 
     # Compute each KL reduction once; transfer all scalar metrics together below.
@@ -116,6 +107,24 @@ def take_step(task, model, optimizer, train_step, config=None, return_outputs=Fa
             reconstruction_error = reconstruction_error - marginal_logprob
 
     loss = config.kl_weight * total_kl + config.reconstruction_weight * reconstruction_error
+    return loss, total_kl, reconstruction_error, kl_sums, kl_names, (logits, x_mask, y_mask)
+
+
+def take_step(task, model, optimizer, train_step, config=None, return_outputs=False,
+              phase_callback=None, diagnostic_callback=None, optimizer_scope=None):
+    """Compute the ARC objective, update model weights, and return scalar metrics."""
+    config = config if config is not None else load_config().training
+    optimizer.zero_grad()
+    if phase_callback is not None:
+        phase_callback("forward")
+    logits, x_mask, y_mask, kl_amounts, kl_names = model.forward()
+    if diagnostic_callback is not None:
+        diagnostic_callback("outputs", (logits, x_mask, y_mask, *kl_amounts))
+    if phase_callback is not None:
+        phase_callback("loss")
+    loss, total_kl, reconstruction_error, kl_sums, kl_names, outputs = compute_objective(
+        task, (logits, x_mask, y_mask, kl_amounts, kl_names), train_step, config)
+    logits, x_mask, y_mask = outputs
     if phase_callback is not None:
         phase_callback("backward")
     if diagnostic_callback is not None:

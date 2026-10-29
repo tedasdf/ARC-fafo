@@ -22,7 +22,8 @@ from compressarc.train import take_step
 from compressarc.train.device_dispatch import runtime_device_dispatch
 from compressarc.train.optimizer import create_optimizer
 
-COMPONENTS = ('share_up', 'share_down', 'direction_share', 'shift', 'cummax')
+COMPONENTS = ('share_up', 'share_down', 'direction_share', 'shift', 'cummax',
+              'softmax', 'nonlinear', 'normalize', 'latent_decoder', 'output_heads', 'loss')
 
 
 def tensors(value):
@@ -65,18 +66,27 @@ def detach_inputs(value, memo=None):
 
 
 @contextmanager
-def capture_components(model, selected=COMPONENTS):
-    """Capture boundary inputs and real loss gradients during one ordinary step."""
+def capture_components(model, selected=COMPONENTS, capture_connected=False):
+    """Capture all boundaries, including direct KL outputs and the loss boundary."""
+    from compressarc.model import model as model_module
+    from compressarc.train import objective
     records, patches, handles, counts = [], [], [], {}
-    def wrap(name, fn):
+    def wrap(name, fn, input_indices=(0,), loss_only=False):
         def captured(*args, **kwargs):
             index = counts.get(name, 0)
             counts[name] = index + 1
-            detached = detach_inputs(args[0])
+            replay_args = list(args)
+            memo = {}
+            for i in input_indices:
+                replay_args[i] = detach_inputs(args[i], memo)
             output = fn(*args, **kwargs)
-            outputs = [x for x in unique_tensors(output) if x.requires_grad]
-            record = dict(name=f'depth_{index}/{name}', call=fn,
-                          args=(detached, *args[1:]), kwargs=kwargs,
+            observed = output[0] if loss_only else output
+            outputs = [x for x in unique_tensors(observed) if x.requires_grad]
+            replay = (lambda *a, **kw: fn(*a, **kw)[0]) if loss_only else fn
+            root = name in ('latent_decoder', 'output_heads', 'loss', 'connected_model')
+            record = dict(name=name if root else f'depth_{index}/{name}', call=replay,
+                          args=tuple(replay_args), kwargs=kwargs,
+                          boundary_inputs=[replay_args[i] for i in input_indices],
                           upstream=[None] * len(outputs))
             for i, tensor in enumerate(outputs):
                 def save(gradient, record=record, i=i):
@@ -86,11 +96,22 @@ def capture_components(model, selected=COMPONENTS):
             return output
         return captured
     try:
-        for name in selected:
-            owner = model.share if name in ('share_up', 'share_down') else model
-            attribute = name
+        for name in [*selected, *(['connected_model'] if capture_connected else [])]:
+            indices, loss_only = (0,), False
+            if name in ('share_up', 'share_down'):
+                owner, attribute = model.share, name
+            elif name in ('nonlinear', 'normalize'):
+                owner, attribute = model_module, name
+            elif name == 'loss':
+                owner, attribute, indices, loss_only = objective, 'compute_objective', (1,), True
+            elif name == 'connected_model':
+                owner, attribute, indices = model, 'forward', ()
+            else:
+                owner, attribute = model, name
+                if name == 'latent_decoder':
+                    indices = ()  # Parameters remain the original tied leaf tensors.
             fn = getattr(owner, attribute)
-            replacement = patch.object(owner, attribute, wrap(name, fn))
+            replacement = patch.object(owner, attribute, wrap(name, fn, indices, loss_only))
             replacement.start()
             patches.append(replacement)
         yield records
@@ -132,7 +153,7 @@ def summarize(samples):
 
 
 def benchmark_component(record, parameters, device, warmup=5, steps=20):
-    inputs = unique_tensors(record['args'][0])
+    inputs = unique_tensors(record.get('boundary_inputs', record['args'][:1]))
     samples = []
     for iteration in range(warmup + steps):
         for tensor in [*parameters, *inputs]:
@@ -195,6 +216,7 @@ def main(argv=None):
     parser.add_argument('--output-dir', type=Path, default=Path('outputs/backward_latency'))
     parser.add_argument('--upload-wandb', action='store_true')
     args = parser.parse_args(argv)
+    args.components = list(dict.fromkeys(args.components))
     if args.prepare_steps < 0 or args.warmup_steps < 0 or args.measured_steps < 1:
         parser.error('Step counts must be nonnegative and measured-steps positive')
     config = load_config(args.config, args.overrides)
@@ -222,13 +244,16 @@ def main(argv=None):
             with patch.object(optimizer, 'step', lambda: None):
                 full = benchmark_full_backward(task, model, optimizer, config.training, device,
                                                args.warmup_steps, args.measured_steps, args.prepare_steps)
-                with capture_components(model, args.components) as records:
+                with capture_components(model, args.components, capture_connected=True) as records:
                     take_step(task, model, optimizer, args.prepare_steps, config.training)
-                rows = []
+                rows, connected = [], None
                 for record in records:
                     row = benchmark_component(record, model.weights_list, device,
                                               args.warmup_steps, args.measured_steps)
-                    rows.append(row)
+                    if row['name'] == 'connected_model':
+                        connected = row
+                    else:
+                        rows.append(row)
                     print(f"{row['name']}: {row['wall_median_seconds']*1000:.3f} ms median", flush=True)
     finally:
         torch.set_default_device(previous)
@@ -238,6 +263,10 @@ def main(argv=None):
                   config=OmegaConf.to_container(config, resolve=True),
                   prepare_training_steps=args.prepare_steps, warmup_steps=args.warmup_steps,
                   measured_steps=args.measured_steps, full_backward=full,
+                  connected_model_backward=connected,
+                  requested_components=args.components,
+                  expected_boundary_count=sum(1 if c in ('latent_decoder', 'output_heads', 'loss') else model.n_layers for c in args.components),
+                  observed_boundary_count=len(rows),
                   components=sorted(rows, key=lambda r:r['wall_median_seconds'], reverse=True),
                   caveats=[
                       'Isolated VJPs use observed task activations and loss upstream gradients at a fixed weight snapshot.',
@@ -246,10 +275,14 @@ def main(argv=None):
                       'Completion timing adds CUDA barriers; CUDA event spans include CPU dispatch gaps, not GPU active time.',
                       'Components cannot be summed to reconstruct full backward: boundaries, scheduling and accumulation differ.',
                       'Identity outputs can share upstream gradient paths; results are diagnostic, not exact end-to-end attribution.',
+                      'Connected-model VJP excludes loss arithmetic but includes direct KL gradients and all model layers.',
+                      'Loss VJP detaches logits, masks and KL amounts; model VJP and loss VJP are separate experiments, not an additive partition.',
                       'No profiler, optimiser updates, numerical diagnostics or W&B logging inside timed intervals.'])
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir/'backward_latency.json').write_text(json.dumps(report, indent=2))
-    lines = [f"Full backward median: {full['wall_median_seconds']*1000:.3f} ms", '',
+    lines = [f"Full backward median: {full['wall_median_seconds']*1000:.3f} ms",
+             f"Connected model VJP median: {connected['wall_median_seconds']*1000:.3f} ms (loss arithmetic excluded)",
+             f"Boundary coverage: {len(rows)}/{report['expected_boundary_count']}", '',
              'Isolated component | backward median ms | mean ms']
     lines += [f"{r['name']} | {r['wall_median_seconds']*1000:.3f} | {r['wall_mean_seconds']*1000:.3f}" for r in report['components']]
     lines += ['', *report['caveats']]
@@ -258,7 +291,7 @@ def main(argv=None):
     if args.upload_wandb:
         from profile_layers import upload_profile
         upload_profile(args.output_dir, config.logging.get('wandb_entity') or 'arc_agi',
-                       config.logging.wandb_project, 'd4-conv-backward-latency')
+                       config.logging.wandb_project, 'd4-conv-backward-coverage')
     return report
 
 

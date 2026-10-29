@@ -715,3 +715,37 @@ python src/profile_backward.py \
 `--components direction_share shift` limits the isolated cases when desired.
 This script does not enable per-step W&B logging or numerical checks, so the
 `training.diagnostics_implementation` setting does not affect the timed VJPs.
+
+### Complete backward coverage: model versus loss
+
+The default isolated set now also includes softmax, nonlinear, standalone
+normalisation, latent decoder, output heads, and the reconstruction/KL objective.
+A four-depth model should report 35 isolated boundaries (8 per depth, plus the
+latent decoder, output heads and loss). The report lists expected and observed
+boundary counts; selecting `--components` deliberately reduces that coverage.
+
+Three measurements answer different questions:
+
+- `full_backward`: the actual connected loss-to-parameter backward reference.
+- `connected_model_backward`: a connected VJP through the entire model, using
+  captured real gradients for logits, masks AND KL amounts, with loss arithmetic
+  excluded. This preserves cross-layer connectivity and shared parameters.
+- `loss`: objective-only backward into detached logits, masks and KL amounts.
+  Objective construction uses the same function as normal training.
+
+Each isolated component still uses its real captured loss gradients. Latent
+parameters remain the original tied leaves, not detached copies. Exact CPU tests
+verify connected-model parameter gradients and loss-boundary gradients against a
+full training backward. The loss extraction also matched the pre-refactor trainer
+bitwise for three steps each on fixed and uncertain output shapes.
+
+Do not call `full - connected - loss` pure graph overhead: each timing has a
+separate graph, gradient accumulation, barriers and scheduling. These experiments
+help locate the missing work and compare connected versus isolated behaviour;
+only an eventual clean end-to-end A/B test proves an optimisation's saving.
+The raw operator trace remains the source for kernel-active execution times.
+
+Run the prior `profile_backward.py` command with a fresh output directory:
+`--output-dir outputs/d4_conv_backward_coverage --upload-wandb`. Uploads now use
+artifact `d4-conv-backward-coverage`, preserving the earlier five-component report.
+Reports contain JSON/text only; no model weights or checkpoints are uploaded.
