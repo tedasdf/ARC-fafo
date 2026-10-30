@@ -32,3 +32,16 @@ def test_packed_matches_reference(device, dtype, dims, pre_norm):
     for expected, actual in zip(grads_y, grads_z):
         torch.testing.assert_close(expected, actual, **tolerance)
     assert packed.state_dict().keys() == reference.state_dict().keys()
+
+@pytest.mark.parametrize("reflection", [False, True])
+@pytest.mark.parametrize("turns", range(4))
+def test_packed_commutes_with_d4_direction_action(reflection, turns):
+    layer = D4DirectionShareLayer(lambda f: f, packed=True).double()
+    torch.manual_seed(7)
+    x = torch.randn(2,8,3,dtype=torch.float64)
+    w = [(torch.randn(3,2,dtype=torch.float64),), (torch.randn(2,3,dtype=torch.float64),)]
+    permutation = ((-torch.arange(8) if reflection else torch.arange(8)) + 2*turns) % 8
+    dims = (1,0,1,0,0)
+    y = layer._apply_multitensor(dims,x,w)
+    transformed = layer._apply_multitensor(dims,x[:,permutation],w)
+    torch.testing.assert_close(transformed,y[:,permutation],atol=1e-12,rtol=1e-11)
