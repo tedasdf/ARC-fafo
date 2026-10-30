@@ -1,23 +1,8 @@
-import importlib.util
-from pathlib import Path
-import sys
-
 import torch
 from src import D4DirectionShare, compressarc_direction_share
 
 
-# Load the real CompressARC layer and its MultiTensor implementation, matching
-# the integration style used by test_shift_adapter.py.
-reference_dir = Path(__file__).resolve().parents[2] / "compress stuff"
-sys.path.insert(0, str(reference_dir))
-try:
-    spec = importlib.util.spec_from_file_location(
-        "compressarc_reference_layers", reference_dir / "layers.py"
-    )
-    reference = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(reference)
-finally:
-    sys.path.pop(0)
+from src.native_reference import reference
 
 
 def test_original_direction_share_tying():
