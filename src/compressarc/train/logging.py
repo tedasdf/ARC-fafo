@@ -23,6 +23,8 @@ def initialize_wandb(config, task):
         tags.append("direction-share-vectorized")
     if config.get("model", {}).get("cummax_implementation") == "triton_hard":
         tags.append("cummax-triton-hard")
+    if config.get("model", {}).get("cummax_implementation") == "triton":
+        tags.append("cummax-triton-lse")
     if config.get("model", {}).get("softmax_implementation") == "fused":
         tags.append("softmax-fused")
     if config.get("training", {}).get("optimizer_implementation", "default") == "fused":

@@ -45,6 +45,7 @@ def fetch_audit():
 
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--lse-backend',choices=['optimised','triton'],default='optimised')
     p.add_argument('--variants',nargs='+',choices=['original',*SELECTED],default=list(SELECTED))
     p.add_argument('--audit',type=Path,help='Use a saved W&B audit; otherwise query live W&B')
     p.add_argument('--output-dir',type=Path,default=REPO/'experiments/seed2_40_optimised_remaining')
@@ -66,14 +67,20 @@ def main(argv=None):
         cfg=load_config(path,compatible_overrides(base,'accelerated')+[
             'training.seed=2','training.iterations=1500','training.split=training',
             'training.step_timing=wall','logging.save_model=false'])
+        if variant=='projected_lse':
+            cfg.model.cummax_implementation=args.lse_backend
         cfg=OmegaConf.to_container(cfg,resolve=True)
         cfg['experiment'].update(name=f'{variant}_seed2_optimised40',task_ids=tasks,seeds=[2],
                                  task_cohorts=original['cohorts'],backend_regime='optimised',
                                  resumed_from_model_checkpoint=False)
+        if variant=='projected_lse' and args.lse_backend=='triton':
+            cfg['experiment']['name']='projected_lse_seed2_triton_optimised40'
         cfg['experiment'].pop('task_sample_seed',None)
         cfg['logging']['log_config']=True
         cfg['logging']['wandb_tags']=['final-ablation','sample40','seed2-rerun','seed2-optimised-remaining',
                                        'optimised-backends','steps1500','strict',variant]
+        if variant=='projected_lse' and args.lse_backend=='triton':
+            cfg['logging']['wandb_tags']+=['seed2-lse-triton-remaining','lse-triton']
         configs[variant]=cfg
         (folder/f'configs/{variant}.json').write_text(json.dumps(cfg,indent=2)+'\n')
     jobs=[]
@@ -172,7 +179,7 @@ training split, seed2 and variant tag. Duplicate run IDs are retained as evidenc
 but each task is counted once. Accuracy is not used. Only the variants listed in the counts above are scheduled. Active runs are recorded separately and excluded.
 
 New runs use compatible optimised settings, 1500 steps, seed2, ordinary metrics
-and candidate logging. LSE retains its learned optimised operator; projected D4
+and candidate logging. LSE retains learned LSE math with the selected backend recorded in config; projected D4
 sharing retains its d4 operator; hard-cummax variants use grouped hard Triton.
 No weights/checkpoints are saved or uploaded. This restarts unfinished runs from
 initialisation, not deleted checkpoints. Legacy completed runs keep their older
