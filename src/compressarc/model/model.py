@@ -145,6 +145,8 @@ class ARCCompressor:
                         tau=self.config.get("lse_tau", 0.1),
                         timing=self.config.get("layer_timing", False),
                     )
+            if name == "direction_share" and implementation == "d4":
+                options["packed"] = self.config.get("direction_share_packed", False)
             layer = factory.create(name, implementation, multify=multify, **options)
             setattr(self, name, layer)
             self._layer_call_options[name] = projected

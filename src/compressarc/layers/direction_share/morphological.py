@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from ..helper import apply_residual
+from ..helper import apply_residual, normalize
 
 
 class D4DirectionShare(nn.Module):
@@ -91,7 +91,7 @@ def compressarc_direction_share(dims, x, model):
 class D4DirectionShareLayer(nn.Module):
     """x + W2 D4(W1 normalize(x)); one D4 mixer per model depth."""
 
-    def __init__(self, multify, n_layers=1):
+    def __init__(self, multify, n_layers=1, packed=False):
         super().__init__()
         self.models = nn.ModuleList([D4DirectionShare() for _ in range(n_layers)])
 
@@ -100,6 +100,21 @@ class D4DirectionShareLayer(nn.Module):
                 return x
             axis = sum(dims[:2])
             model = self.models[layer_index]
+
+            if packed:
+                # Direction and channel maps commute. Retain the original leaf
+                # parameters; rebuild the differentiable packed map each call.
+                z = normalize(x) if pre_norm else x
+                channels = x.shape[-1]
+                channel_map = weights[0][0] @ weights[1][0]
+                direction_map = model.weight()
+                packed_weight = (
+                    direction_map.T[:, None, :, None]
+                    * channel_map[None, :, None, :]
+                ).reshape(8 * channels, 8 * channels)
+                moved = z.movedim(axis, -2)
+                delta = (moved.reshape(-1, 8 * channels) @ packed_weight).reshape(moved.shape)
+                return x + delta.movedim(-2, axis)
 
             def mix(projected):
                 if axis == 0:

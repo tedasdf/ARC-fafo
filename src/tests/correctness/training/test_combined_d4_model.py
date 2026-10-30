@@ -29,8 +29,9 @@ def test_combined_config_and_manifest_are_one_distinct_40_task_variant():
     assert '--array=0-39%2' in (FOLDER/'submit.slurm').read_text()
 
 
+@pytest.mark.parametrize("packed", [False, True])
 @pytest.mark.parametrize('device',['cpu','cuda'])
-def test_both_d4_operators_receive_gradients_and_update_in_one_training_step(device):
+def test_both_d4_operators_receive_gradients_and_update_in_one_training_step(device, packed):
     if device=='cuda':
         if not torch.cuda.is_available():pytest.skip('Combined accelerated CUDA path requires M3')
         pytest.importorskip('triton')
@@ -41,7 +42,7 @@ def test_both_d4_operators_receive_gradients_and_update_in_one_training_step(dev
     from compressarc.train.optimizer import create_optimizer
     from compressarc.train import take_step
     from compressarc.train.device_dispatch import runtime_device_dispatch
-    overrides=['model.n_layers=1','model.channel_dim_shared=2','model.channel_dim_grid=2',
+    overrides=[f'model.direction_share_packed={str(packed).lower()}', 'model.n_layers=1','model.channel_dim_shared=2','model.channel_dim_grid=2',
         'model.share_up_dim=2','model.share_down_dim=2','model.decoding_dim=2',
         'model.softmax_dim=2','model.cummax_dim=2','model.shift_dim=2','model.nonlinear_dim=2',
         'model.direction_share_dim=2']
