@@ -18,7 +18,10 @@ def initialize_wandb(config, task):
     if config.get("model", {}).get("shift_implementation") in ("tied_conv", "c4_tied_conv", "unfold", "triton"):
         tags.append("C4")
     if config.get("model", {}).get("shift_implementation") == "d4_tied_conv":
-        tags.append("D4-conv")
+        if config.get("model", {}).get("direction_share_implementation") == "d4":
+            tags.append("combined-d4-conv-sharing")
+        else:
+            tags.append("D4-conv")
     if config.get("model", {}).get("direction_share_implementation") == "vectorized":
         tags.append("direction-share-vectorized")
     if config.get("model", {}).get("cummax_implementation") == "triton_hard":
