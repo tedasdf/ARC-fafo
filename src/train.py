@@ -13,6 +13,7 @@ import preprocessing
 from config import load_config
 from compressarc.model.model import ARCCompressor
 from compressarc.train import take_step
+from compressarc.train.cuda_graph import CudaGraphStep, validate_cuda_graph_options
 from compressarc.train.metrics import SolutionTracker
 from compressarc.train.checkpoint import save_inference_checkpoint
 from compressarc.train.diagnostics import TrainingDiagnostics
@@ -101,6 +102,7 @@ def main(argv=None):
         raise RuntimeError("CUDA was requested, but no CUDA device is available")
     if device_object.type == "cuda":
         torch.cuda.set_device(device_object.index or 0)
+    validate_cuda_graph_options(training_config, config.model, mode, device_object)
     training_config.device = device
     torch.set_default_device(device)
 
@@ -173,6 +175,8 @@ def main(argv=None):
                         with step_timer.optimizer_scope(name), operator_profiler.scope("optimizer/"+name):
                             yield
 
+                    graph_step = CudaGraphStep(task, model, optimizer, training_config) if training_config.get("cuda_graph", False) else None
+                    training_step = graph_step if graph_step is not None else take_step
                     last_metrics = None
                     progress = tqdm(range(training_config.iterations), desc=task.task_name, leave=False)
                     for train_step in progress:
@@ -180,7 +184,7 @@ def main(argv=None):
                         step_timer.start(train_step)
                         diagnostics.step = train_step
                         with sharing_stage_timing(step_timer.scope if step_timer.mode == "phases" and training_config.get("sharing_stage_timing", False) else None):
-                            last_metrics = take_step(
+                            last_metrics = training_step(
                                 task, model, optimizer, train_step, training_config,
                                 return_outputs=True,
                                 **({"phase_callback": mark_phase} if step_timer.mode == "phases" or profiling else {}),
@@ -200,6 +204,14 @@ def main(argv=None):
                             step_times["timing/operator_profile_active"] = operator_profiler.active
                         step_timer.publish(step_times, run)
                         operator_profiler.after_step(train_step)
+
+                    if graph_step is not None:
+                        graph_report = graph_step.summary()
+                        args.output_dir.mkdir(parents=True, exist_ok=True)
+                        (args.output_dir / f"{task.task_name}.cuda_graph.json").write_text(json.dumps(graph_report, indent=2))
+                        print("CUDA Graph: " + json.dumps(graph_report), flush=True)
+                        if run is not None:
+                            run.summary.update({"cuda_graph/" + key: value for key, value in graph_report.items()})
 
                     if args.save_checkpoints or (run is not None and config.logging.get("save_model", True)):
                         args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -221,7 +233,7 @@ def main(argv=None):
                         ))
                     log_final_candidates(run, tracker)
             # Release the previous task before constructing the next GPU model.
-            del model, optimizer, last_metrics
+            del model, optimizer, last_metrics, graph_step, training_step
 
 
 

@@ -11,8 +11,9 @@ def channel_layer(target_capacity, posterior):
     reduction_axes = tuple(range(mean.ndim - 1))
     dimensionality = mean.numel()
 
-    min_capacity = mean.new_tensor(0.5)
-    init_capacity = mean.new_tensor(10000.0)
+    # Python scalars avoid synchronous CPU-to-GPU scalar copies during graph capture.
+    min_capacity = 0.5
+    init_capacity = 10000.0
     target_capacity = 10 * target_capacity
 
     desired_global_capacity = torch.exp(target_capacity) * init_capacity + min_capacity

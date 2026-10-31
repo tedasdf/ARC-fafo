@@ -24,6 +24,8 @@ def initialize_wandb(config, task):
             tags.append("D4-conv")
     if config.get("model", {}).get("direction_share_implementation") == "vectorized":
         tags.append("direction-share-vectorized")
+    if config.get("model", {}).get("direction_share_implementation") == "vectorized_packed":
+        tags.append("direction-share-vectorized-packed")
     if config.get("model", {}).get("cummax_implementation") == "triton_hard":
         tags.append("cummax-triton-hard")
     if config.get("model", {}).get("cummax_implementation") == "triton":
@@ -46,6 +48,8 @@ def initialize_wandb(config, task):
         tags.append("operator-profile")
     elif step_timing != "off":
         tags.append(f"timing-{step_timing}")
+    if config.training.get("cuda_graph", False):
+        tags.append("cuda-graph-forward-backward")
     variant_tag = config.get("experiment", {}).get("variant")
     if variant_tag:
         tags.append(variant_tag)
