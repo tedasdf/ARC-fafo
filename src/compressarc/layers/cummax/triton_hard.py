@@ -183,7 +183,7 @@ class _Axis(torch.autograd.Function):
         x,mask,index,hi,lo=ctx.saved_tensors
         dx=torch.empty_like(x);length=x.shape[-1]
         with torch.cuda.device(x.device):
-                [(x.numel(),)](x,mask,index,hi,lo,grad.contiguous(),dx,L=length,
+            _axis_backward[(x.numel(),)](x,mask,index,hi,lo,grad.contiguous(),dx,L=length,
                                        B=triton.next_power_of_2(length),enable_fp_fusion=False)
         return dx,None
 
