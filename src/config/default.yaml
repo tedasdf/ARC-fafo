@@ -22,7 +22,7 @@ model:
   cummax_implementation: primitives
   lse_tau: 0.1
   layer_timing: false
-  # direction share: primitives | vectorized (same pair weights) | d4 (projected pilot wrapper)
+  # direction share: primitives | vectorized | vectorized_packed (same leaves, packed gradients) | d4 (projected pilot wrapper)
   direction_share_implementation: primitives
   direction_share_dim: 8
 
@@ -41,6 +41,10 @@ training:
   runtime_device_dispatch: global
   # off: unchanged path; wall: whole-step; phases: detailed host/CUDA stream timings.
   step_timing: "off"
+  # Opt-in forward/loss/backward graph; Adam and CPU tracking remain eager.
+  cuda_graph: false
+  cuda_graph_start: 100
+  cuda_graph_warmup: 3
   sharing_stage_timing: false
   operator_profile: false
   operator_profile_start: 10

@@ -32,10 +32,7 @@ class DirectionShareVectorized(DirectionSharePrimitives):
             channels = x.shape[-1]
             # [out, in, Cin, Cout] -> [in*Cin, out*Cout]
             with profile_operation_stage("direction_share", "weight_packing"):
-                blocks = torch.stack([pair[0] for row in weights for pair in row]).reshape(
-                    8, 8, channels, channels)
-                packed = (blocks * coefficients[..., None, None]).permute(1, 2, 0, 3).reshape(
-                    8*channels, 8*channels)
+                packed = self._pack_weights(weights, coefficients, channels)
             with profile_operation_stage("direction_share", "input_layout"):
                 moved = z.movedim(direction_dim, -2)
                 flattened = moved.reshape(-1, 8*channels)
@@ -49,3 +46,9 @@ class DirectionShareVectorized(DirectionSharePrimitives):
                 return x + delta.movedim(-2, direction_dim)
 
         self._apply = multify(only_do_for_certain_shapes(*directional_dims)(apply_one))
+
+    def _pack_weights(self, weights, coefficients, channels):
+        blocks = torch.stack([pair[0] for row in weights for pair in row]).reshape(
+            8, 8, channels, channels)
+        return (blocks * coefficients[..., None, None]).permute(1, 2, 0, 3).reshape(
+            8*channels, 8*channels)
